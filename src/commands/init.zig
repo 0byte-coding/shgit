@@ -32,8 +32,15 @@ pub fn execute(allocator: std.mem.Allocator, verbose: bool) !void {
     // Create shgit structure
     try config.initShgitStructure(allocator, cwd);
 
-    // Create default config
-    const cfg = config.Config{};
+    // Create default config with .env sync pattern
+    const default_patterns = try allocator.alloc(config.SyncPattern, 1);
+    default_patterns[0] = .{ .pattern = try allocator.dupe(u8, ".env"), .mode = .symlink };
+
+    var cfg = config.Config{
+        .sync_patterns = default_patterns,
+    };
+    defer cfg.deinit(allocator);
+
     try config.saveConfig(allocator, cwd, cfg);
 
     // Create .gitignore if not exists

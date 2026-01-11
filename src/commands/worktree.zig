@@ -174,8 +174,8 @@ fn syncEnvFiles(
     main_repo_path: []const u8,
     worktree_path: []const u8,
 ) !void {
-    for (cfg.sync_patterns) |pattern| {
-        try syncPattern(allocator, main_repo_path, worktree_path, pattern);
+    for (cfg.sync_patterns) |sp| {
+        try syncPattern(allocator, main_repo_path, worktree_path, sp.pattern, sp.mode);
     }
 }
 
@@ -184,9 +184,10 @@ fn syncPattern(
     main_repo_path: []const u8,
     worktree_path: []const u8,
     pattern: []const u8,
+    mode: config.SyncMode,
 ) !void {
     // Simple pattern matching - walk main repo and find matches
-    try walkAndSync(allocator, main_repo_path, worktree_path, "", pattern);
+    try walkAndSync(allocator, main_repo_path, worktree_path, "", pattern, mode);
 }
 
 fn walkAndSync(
@@ -195,6 +196,7 @@ fn walkAndSync(
     worktree_base: []const u8,
     rel_path: []const u8,
     pattern: []const u8,
+    mode: config.SyncMode,
 ) !void {
     const main_path = if (rel_path.len > 0)
         try std.fs.path.join(allocator, &.{ main_base, rel_path })
@@ -220,7 +222,7 @@ fn walkAndSync(
         defer allocator.free(new_rel);
 
         if (entry.kind == .directory) {
-            try walkAndSync(allocator, main_base, worktree_base, new_rel, pattern);
+            try walkAndSync(allocator, main_base, worktree_base, new_rel, pattern, mode);
         } else {
             // Check if matches pattern
             if (matchesPattern(new_rel, pattern) or matchesPattern(entry.name, pattern)) {
@@ -230,21 +232,37 @@ fn walkAndSync(
                 const dst = try std.fs.path.join(allocator, &.{ worktree_base, new_rel });
                 defer allocator.free(dst);
 
-                const rel_link = try fs_utils.relativePath(allocator, dst, src);
-                defer allocator.free(rel_link);
-
                 // Ensure parent dir exists
                 if (std.fs.path.dirname(dst)) |parent| {
                     std.fs.cwd().makePath(parent) catch {};
                 }
 
                 std.fs.cwd().deleteFile(dst) catch {};
-                std.fs.cwd().symLink(rel_link, dst, .{}) catch |err| {
-                    log.warn("could not sync {s}: {}", .{ new_rel, err });
-                    continue;
-                };
 
-                log.info("synced: {s}", .{new_rel});
+                switch (mode) {
+                    .symlink => {
+                        const rel_link = try fs_utils.relativePath(allocator, dst, src);
+                        defer allocator.free(rel_link);
+
+                        std.fs.cwd().symLink(rel_link, dst, .{}) catch |err| {
+                            log.warn("could not symlink {s}: {}", .{ new_rel, err });
+                            continue;
+                        };
+                        log.info("symlinked: {s}", .{new_rel});
+                    },
+                    .copy => {
+                        std.fs.cwd().copyFile(src, std.fs.cwd(), dst, .{}) catch |err| {
+                            log.warn("could not copy {s}: {}", .{ new_rel, err });
+                            continue;
+                        };
+                        log.info("copied: {s}", .{new_rel});
+                    },
+                }
+
+                // Add to local git exclude so it's not tracked
+                git.addLocalExclude(allocator, worktree_base, new_rel) catch |err| {
+                    log.warn("could not add {s} to local exclude: {}", .{ new_rel, err });
+                };
             }
         }
     }

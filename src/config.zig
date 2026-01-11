@@ -2,15 +2,27 @@ const std = @import("std");
 
 const log = std.log.scoped(.config);
 
+/// How to sync a file: symlink or copy
+pub const SyncMode = enum {
+    symlink,
+    copy,
+};
+
+/// A sync pattern with its mode
+pub const SyncPattern = struct {
+    pattern: []const u8,
+    mode: SyncMode = .symlink,
+};
+
 pub const Config = struct {
     /// Patterns for files to sync from main repo to worktrees (like .gitignore patterns)
-    sync_patterns: []const []const u8 = &.{},
+    sync_patterns: []const SyncPattern = &.{},
     /// Main repo directory name (default: first directory in repo/)
     main_repo: ?[]const u8 = null,
 
     pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {
-        for (self.sync_patterns) |pattern| {
-            allocator.free(pattern);
+        for (self.sync_patterns) |sp| {
+            allocator.free(sp.pattern);
         }
         if (self.sync_patterns.len > 0) {
             allocator.free(self.sync_patterns);
@@ -81,14 +93,17 @@ pub fn loadConfig(allocator: std.mem.Allocator, shgit_root: []const u8) !Config 
 fn parseConfig(allocator: std.mem.Allocator, content: []const u8) !Config {
     // Simple ZON-like parsing for sync_patterns
     var cfg = Config{};
-    var patterns: std.ArrayList([]const u8) = .empty;
+    var patterns: std.ArrayList(SyncPattern) = .empty;
     errdefer {
-        for (patterns.items) |p| allocator.free(p);
+        for (patterns.items) |p| allocator.free(p.pattern);
         patterns.deinit(allocator);
     }
 
     var lines = std.mem.splitScalar(u8, content, '\n');
     var in_sync_patterns = false;
+    var current_pattern: ?[]const u8 = null;
+    var current_mode: SyncMode = .symlink;
+    var in_pattern_block = false;
 
     while (lines.next()) |line| {
         const trimmed = std.mem.trim(u8, line, " \t\r");
@@ -100,15 +115,54 @@ fn parseConfig(allocator: std.mem.Allocator, content: []const u8) !Config {
 
         if (in_sync_patterns) {
             if (std.mem.startsWith(u8, trimmed, "},") or std.mem.eql(u8, trimmed, "}")) {
-                in_sync_patterns = false;
+                if (in_pattern_block) {
+                    // End of a pattern block
+                    if (current_pattern) |pat| {
+                        try patterns.append(allocator, .{ .pattern = pat, .mode = current_mode });
+                        current_pattern = null;
+                        current_mode = .symlink;
+                    }
+                    in_pattern_block = false;
+                } else {
+                    // End of sync_patterns section
+                    in_sync_patterns = false;
+                }
                 continue;
             }
 
-            // Parse quoted string like "pattern",
-            if (std.mem.startsWith(u8, trimmed, "\"")) {
+            // Check for pattern block start: .{ or .{
+            if (std.mem.startsWith(u8, trimmed, ".{")) {
+                in_pattern_block = true;
+                current_mode = .symlink; // Default mode
+                continue;
+            }
+
+            // Parse .pattern = "value"
+            if (std.mem.startsWith(u8, trimmed, ".pattern")) {
+                const eq_pos = std.mem.indexOf(u8, trimmed, "=") orelse continue;
+                const rest = std.mem.trim(u8, trimmed[eq_pos + 1 ..], " \t,");
+                if (std.mem.startsWith(u8, rest, "\"")) {
+                    const end = std.mem.indexOfScalarPos(u8, rest, 1, '"') orelse continue;
+                    current_pattern = try allocator.dupe(u8, rest[1..end]);
+                }
+                continue;
+            }
+
+            // Parse .mode = .symlink or .mode = .copy
+            if (std.mem.startsWith(u8, trimmed, ".mode")) {
+                if (std.mem.indexOf(u8, trimmed, ".copy") != null) {
+                    current_mode = .copy;
+                } else {
+                    current_mode = .symlink;
+                }
+                continue;
+            }
+
+            // Legacy format: just a quoted string like "pattern",
+            if (std.mem.startsWith(u8, trimmed, "\"") and !in_pattern_block) {
                 const end = std.mem.indexOfScalarPos(u8, trimmed, 1, '"') orelse continue;
                 const pattern = try allocator.dupe(u8, trimmed[1..end]);
-                try patterns.append(allocator, pattern);
+                try patterns.append(allocator, .{ .pattern = pattern, .mode = .symlink });
             }
         }
 
@@ -152,8 +206,11 @@ pub fn saveConfig(allocator: std.mem.Allocator, shgit_root: []const u8, cfg: Con
     }
 
     try writer.writeAll("    .sync_patterns = .{\n");
-    for (cfg.sync_patterns) |pattern| {
-        try writer.print("        \"{s}\",\n", .{pattern});
+    for (cfg.sync_patterns) |sp| {
+        try writer.writeAll("        .{\n");
+        try writer.print("            .pattern = \"{s}\",\n", .{sp.pattern});
+        try writer.print("            .mode = .{s},\n", .{@tagName(sp.mode)});
+        try writer.writeAll("        },\n");
     }
     try writer.writeAll("    },\n");
     try writer.writeAll("}\n");
@@ -182,7 +239,35 @@ pub fn initShgitStructure(allocator: std.mem.Allocator, path: []const u8) !void 
     log.info("created shgit structure at {s}", .{path});
 }
 
-test "parseConfig basic" {
+test "parseConfig new format" {
+    const content =
+        \\.{
+        \\    .sync_patterns = .{
+        \\        .{
+        \\            .pattern = ".env",
+        \\            .mode = .symlink,
+        \\        },
+        \\        .{
+        \\            .pattern = ".env.local",
+        \\            .mode = .copy,
+        \\        },
+        \\    },
+        \\    .main_repo = "myrepo",
+        \\}
+    ;
+
+    var cfg = try parseConfig(std.testing.allocator, content);
+    defer cfg.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), cfg.sync_patterns.len);
+    try std.testing.expectEqualStrings(".env", cfg.sync_patterns[0].pattern);
+    try std.testing.expectEqual(SyncMode.symlink, cfg.sync_patterns[0].mode);
+    try std.testing.expectEqualStrings(".env.local", cfg.sync_patterns[1].pattern);
+    try std.testing.expectEqual(SyncMode.copy, cfg.sync_patterns[1].mode);
+    try std.testing.expectEqualStrings("myrepo", cfg.main_repo.?);
+}
+
+test "parseConfig legacy format" {
     const content =
         \\.{
         \\    .sync_patterns = .{
@@ -197,8 +282,10 @@ test "parseConfig basic" {
     defer cfg.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 2), cfg.sync_patterns.len);
-    try std.testing.expectEqualStrings(".env", cfg.sync_patterns[0]);
-    try std.testing.expectEqualStrings(".env.local", cfg.sync_patterns[1]);
+    try std.testing.expectEqualStrings(".env", cfg.sync_patterns[0].pattern);
+    try std.testing.expectEqual(SyncMode.symlink, cfg.sync_patterns[0].mode);
+    try std.testing.expectEqualStrings(".env.local", cfg.sync_patterns[1].pattern);
+    try std.testing.expectEqual(SyncMode.symlink, cfg.sync_patterns[1].mode);
     try std.testing.expectEqualStrings("myrepo", cfg.main_repo.?);
 }
 
