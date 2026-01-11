@@ -5,11 +5,12 @@ shgit is a Zig CLI tool for managing personal project overlays with git. It allo
 
 ## Build Commands
 ```bash
-zig build                                    # Build the project
-zig build -Doptimize=ReleaseFast            # Build with release optimizations
-zig build run -- <args>                      # Run the CLI
-zig build test                               # Run all tests
-zig build test -Dtest-filter="pattern"       # Run single test by name filter
+zig build                                       # Build the project
+zig build -Dcross=true -Doptimize=ReleaseFast   # Compile for target systems
+zig build -Doptimize=ReleaseFast                # Build with release optimizations
+zig build run -- <args>                         # Run the CLI
+zig build test                                  # Run all tests
+zig build test -Dtest-filter="pattern"          # Run single test by name filter
 ```
 
 ## Project Structure
