@@ -81,7 +81,7 @@ try list.append(allocator, item);
 
 ### Naming Conventions
 - Functions: `camelCase`
-- Types: `PascalCase`  
+- Types: `PascalCase`
 - Constants: `SCREAMING_SNAKE_CASE` for comptime, `snake_case` for runtime
 - Files: `snake_case.zig`
 - Scopes for logging: `.snake_case`
