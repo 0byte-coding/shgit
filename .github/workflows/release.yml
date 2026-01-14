@@ -104,6 +104,7 @@ jobs:
         license=('MIT')
         provides=('shgit')
         conflicts=('shgit')
+        depends=('git')
         source=("${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/shgit-x86_64-linux-gnu.tar.gz")
         sha256sums=('${{ steps.sha256.outputs.SHA256 }}')
 
