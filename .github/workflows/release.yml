@@ -24,22 +24,34 @@ jobs:
     - name: Install Zig
       uses: goto-bus-stop/setup-zig@v2
       with:
-        version: latest
+        version: 0.15.2
 
     - name: Build
       run: |
-        TARGET="${{ matrix.arch }}-${{ matrix.os }}${{ matrix.abi && '-' + matrix.abi || '' }}"
-        zig build -Dcross=true -Doptimize=ReleaseFast
+        zig build -Dcross=true -Doptimize=ReleaseSafe
+        
+    - name: Package artifacts
+      run: |
+        TARGET="${{ matrix.arch }}-${{ matrix.os }}${{ matrix.abi && format('-{0}', matrix.abi) || '' }}"
+        BINARY="shgit${{ matrix.os == 'windows' && '.exe' || '' }}"
+        cd zig-out/$TARGET
+        if [ "${{ matrix.os }}" = "windows" ]; then
+          zip -r ../../shgit-$TARGET.zip shgit.exe shgit.pdb
+        else
+          tar -czf ../../shgit-$TARGET.tar.gz shgit
+        fi
         
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: shgit-${{ matrix.arch }}-${{ matrix.os }}${{ matrix.abi && format('-{0}', matrix.abi) || '' }}
-        path: zig-out/bin/${{ matrix.arch }}-${{ matrix.os }}${{ matrix.abi && format('-{0}', matrix.abi) || '' }}/shgit${{ matrix.os == 'windows' && '.exe' || '' }}
+        path: shgit-${{ matrix.arch }}-${{ matrix.os }}${{ matrix.abi && format('-{0}', matrix.abi) || '' }}.*
 
   release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
     - uses: actions/checkout@v4
 
@@ -47,11 +59,76 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         path: artifacts
+        merge-multiple: true
 
     - name: Create release
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          artifacts/**/*.tar.gz
+        files: artifacts/*
         generate_release_notes: true
-      
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-aur:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Get version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Download x86_64 Linux artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: shgit-x86_64-linux-gnu
+        path: artifact
+
+    - name: Calculate SHA256
+      id: sha256
+      run: |
+        SHA256=$(sha256sum artifact/shgit-x86_64-linux-gnu.tar.gz | cut -d' ' -f1)
+        echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+
+    - name: Generate PKGBUILD
+      run: |
+        cat > PKGBUILD << 'EOF'
+        # Maintainer: 0_byte <git@susnext.com>
+        pkgname=shgit-bin
+        pkgver=${{ steps.version.outputs.VERSION }}
+        pkgrel=1
+        pkgdesc="A shell-based git client"
+        arch=('x86_64')
+        url="https://github.com/0byte-coding/shgit"
+        license=('MIT')
+        provides=('shgit')
+        conflicts=('shgit')
+        source=("${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/shgit-x86_64-linux-gnu.tar.gz")
+        sha256sums=('${{ steps.sha256.outputs.SHA256 }}')
+
+        package() {
+            install -Dm755 "$srcdir/shgit" "$pkgdir/usr/bin/shgit"
+        }
+        EOF
+
+    - name: Generate .SRCINFO
+      run: |
+        docker run --rm -v "$PWD:/pkg" -w /pkg archlinux:latest bash -c "
+          pacman -Sy --noconfirm binutils fakeroot
+          useradd -m builder
+          chown -R builder:builder /pkg
+          su builder -c 'makepkg --printsrcinfo > .SRCINFO'
+        "
+
+    - name: Publish to AUR
+      uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+      with:
+        pkgname: shgit-bin
+        pkgbuild: ./PKGBUILD
+        commit_username: ${{ secrets.AUR_USERNAME }}
+        commit_email: ${{ secrets.AUR_EMAIL }}
+        ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        commit_message: "Update to version ${{ steps.version.outputs.VERSION }}"
+        ssh_keyscan_types: rsa,ecdsa,ed25519
+        
