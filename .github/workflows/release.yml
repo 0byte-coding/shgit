@@ -34,8 +34,8 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: shgit-${{ matrix.arch }}-${{ matrix.os }}${{ matrix.abi && '-' + matrix.abi || '' }}
-        path: zig-out/bin/${{ matrix.arch }}-${{ matrix.os }}${{ matrix.abi && '-' + matrix.abi || '' }}/shgit${{ matrix.os == 'windows' && '.exe' || '' }}
+        name: shgit-${{ matrix.arch }}-${{ matrix.os }}${{ matrix.abi && format('-{0}', matrix.abi) || '' }}
+        path: zig-out/bin/${{ matrix.arch }}-${{ matrix.os }}${{ matrix.abi && format('-{0}', matrix.abi) || '' }}/shgit${{ matrix.os == 'windows' && '.exe' || '' }}
 
   release:
     needs: build
