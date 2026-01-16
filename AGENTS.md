@@ -173,3 +173,10 @@ try git.addLocalExclude(allocator, repo_path, rel_path);
 3. Use `&writer.interface` to get the actual writer interface
 4. Subcommands are accessed via `subcommands_opt`, not `subcommand`
 5. Optional option types use `?string` in args.zon
+
+## Testing Your Changes
+**IMPORTANT**: After making any code changes, always build and run tests to ensure everything still works:
+```bash
+zig build                  # Verify the project builds
+zig build test             # Run all tests to catch regressions
+```

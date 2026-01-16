@@ -1,4 +1,5 @@
 const std = @import("std");
+const asset = @import("asset");
 const config = @import("../config.zig");
 const git = @import("../git.zig");
 const fs_utils = @import("../fs_utils.zig");
@@ -74,6 +75,14 @@ pub fn execute(allocator: std.mem.Allocator, args: anytype, verbose: bool) !void
         .main_repo = repo_name,
     };
     try config.saveConfig(allocator, shgit_folder, cfg);
+
+    // Create AGENTS.md with embedded prompt content
+    const agents_md_path = try std.fs.path.join(allocator, &.{ shgit_folder, "AGENTS.md" });
+    defer allocator.free(agents_md_path);
+
+    const agents_file = try std.fs.cwd().createFile(agents_md_path, .{});
+    defer agents_file.close();
+    try agents_file.writeAll(asset.prompt_md);
 
     log.info("shgit project created at {s}/", .{shgit_folder});
     log.info("next: cd {s} && shgit link", .{shgit_folder});

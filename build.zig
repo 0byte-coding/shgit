@@ -21,6 +21,11 @@ pub fn build(b: *std.Build) void {
     var default_exe: ?*std.Build.Step.Compile = null;
     var argzon_mod_for_tests: ?*std.Build.Module = null;
 
+    // Asset module (always created)
+    const asset_mod = b.addModule("asset", .{
+        .root_source_file = b.path("asset/root.zig"),
+    });
+
     if (cross_compile) {
         // Build for all targets
         for (cross_targets) |t| {
@@ -38,6 +43,7 @@ pub fn build(b: *std.Build) void {
                     .optimize = optimize,
                     .imports = &.{
                         .{ .name = "argzon", .module = argzon_mod },
+                        .{ .name = "asset", .module = asset_mod },
                     },
                 }),
             });
@@ -71,6 +77,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .imports = &.{
                     .{ .name = "argzon", .module = argzon_mod },
+                    .{ .name = "asset", .module = asset_mod },
                 },
             }),
         });
@@ -100,6 +107,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .imports = &.{
                     .{ .name = "argzon", .module = argzon_mod },
+                    .{ .name = "asset", .module = asset_mod },
                 },
             }),
             .filters = if (test_filter) |f| &.{f} else &.{},
