@@ -66,9 +66,11 @@ pub fn execute(allocator: std.mem.Allocator, args: anytype, verbose: bool) !void
         \\
     );
 
-    // Create default config
+    // Create default config with .env sync pattern
     const cfg = config.Config{
-        .sync_patterns = &.{},
+        .sync_patterns = &.{
+            .{ .pattern = ".env", .mode = .symlink },
+        },
         .main_repo = repo_name,
     };
     try config.saveConfig(allocator, shgit_folder, cfg);
