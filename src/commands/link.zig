@@ -119,9 +119,3 @@ fn linkFile(
     // Add to local git exclude
     try git.addLocalExclude(allocator, target_base, rel_path);
 }
-
-test "link module compiles" {
-    // Basic compilation test
-    _ = linkDirectory;
-    _ = linkFile;
-}

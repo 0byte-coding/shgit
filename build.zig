@@ -98,21 +98,11 @@ pub fn build(b: *std.Build) void {
     }
 
     // Tests (only available in default mode)
-    if (argzon_mod_for_tests) |argzon_mod| {
-        // Unit tests for src/
-        const src_tests = b.addTest(.{
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/main.zig"),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{
-                    .{ .name = "argzon", .module = argzon_mod },
-                    .{ .name = "asset", .module = asset_mod },
-                },
-            }),
-            .filters = if (test_filter) |f| &.{f} else &.{},
+    if (argzon_mod_for_tests) |_| {
+        // Create shgit module for tests
+        const shgit_mod = b.addModule("shgit", .{
+            .root_source_file = b.path("src/root.zig"),
         });
-        const run_src_tests = b.addRunArtifact(src_tests);
 
         // Integration tests in test/
         const integration_tests = b.addTest(.{
@@ -120,6 +110,9 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path("test/main.zig"),
                 .target = target,
                 .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "shgit", .module = shgit_mod },
+                },
             }),
             .filters = if (test_filter) |f| &.{f} else &.{},
         });
@@ -127,7 +120,6 @@ pub fn build(b: *std.Build) void {
 
         // Test step
         const test_step = b.step("test", "Run all tests");
-        test_step.dependOn(&run_src_tests.step);
         test_step.dependOn(&run_integration_tests.step);
     }
 }

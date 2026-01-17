@@ -60,31 +60,3 @@ pub fn relativePath(allocator: std.mem.Allocator, from: []const u8, to: []const 
 
     return result.toOwnedSlice(allocator);
 }
-
-test "relativePath same directory" {
-    const allocator = std.testing.allocator;
-    const rel = try relativePath(allocator, "/a/b/file1", "/a/b/file2");
-    defer allocator.free(rel);
-    try std.testing.expectEqualStrings("file2", rel);
-}
-
-test "relativePath parent directory" {
-    const allocator = std.testing.allocator;
-    const rel = try relativePath(allocator, "/a/b/c/file", "/a/b/target");
-    defer allocator.free(rel);
-    try std.testing.expectEqualStrings("../target", rel);
-}
-
-test "relativePath sibling directory" {
-    const allocator = std.testing.allocator;
-    const rel = try relativePath(allocator, "/a/b/c/file", "/a/x/y/target");
-    defer allocator.free(rel);
-    try std.testing.expectEqualStrings("../../x/y/target", rel);
-}
-
-test "relativePath deeply nested" {
-    const allocator = std.testing.allocator;
-    const rel = try relativePath(allocator, "/repo/worktree/.vscode/settings.json", "/link/.vscode/settings.json");
-    defer allocator.free(rel);
-    try std.testing.expectEqualStrings("../../../link/.vscode/settings.json", rel);
-}

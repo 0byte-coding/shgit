@@ -90,7 +90,7 @@ pub fn loadConfig(allocator: std.mem.Allocator, shgit_root: []const u8) !Config 
     return parseConfig(allocator, content);
 }
 
-fn parseConfig(allocator: std.mem.Allocator, content: []const u8) !Config {
+pub fn parseConfig(allocator: std.mem.Allocator, content: []const u8) !Config {
     // Simple ZON-like parsing for sync_patterns
     var cfg = Config{};
     var patterns: std.ArrayList(SyncPattern) = .empty;
@@ -237,63 +237,4 @@ pub fn initShgitStructure(allocator: std.mem.Allocator, path: []const u8) !void 
     try std.fs.cwd().makePath(repo_dir);
 
     log.info("created shgit structure at {s}", .{path});
-}
-
-test "parseConfig new format" {
-    const content =
-        \\.{
-        \\    .sync_patterns = .{
-        \\        .{
-        \\            .pattern = ".env",
-        \\            .mode = .symlink,
-        \\        },
-        \\        .{
-        \\            .pattern = ".env.local",
-        \\            .mode = .copy,
-        \\        },
-        \\    },
-        \\    .main_repo = "myrepo",
-        \\}
-    ;
-
-    var cfg = try parseConfig(std.testing.allocator, content);
-    defer cfg.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 2), cfg.sync_patterns.len);
-    try std.testing.expectEqualStrings(".env", cfg.sync_patterns[0].pattern);
-    try std.testing.expectEqual(SyncMode.symlink, cfg.sync_patterns[0].mode);
-    try std.testing.expectEqualStrings(".env.local", cfg.sync_patterns[1].pattern);
-    try std.testing.expectEqual(SyncMode.copy, cfg.sync_patterns[1].mode);
-    try std.testing.expectEqualStrings("myrepo", cfg.main_repo.?);
-}
-
-test "parseConfig legacy format" {
-    const content =
-        \\.{
-        \\    .sync_patterns = .{
-        \\        ".env",
-        \\        ".env.local",
-        \\    },
-        \\    .main_repo = "myrepo",
-        \\}
-    ;
-
-    var cfg = try parseConfig(std.testing.allocator, content);
-    defer cfg.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 2), cfg.sync_patterns.len);
-    try std.testing.expectEqualStrings(".env", cfg.sync_patterns[0].pattern);
-    try std.testing.expectEqual(SyncMode.symlink, cfg.sync_patterns[0].mode);
-    try std.testing.expectEqualStrings(".env.local", cfg.sync_patterns[1].pattern);
-    try std.testing.expectEqual(SyncMode.symlink, cfg.sync_patterns[1].mode);
-    try std.testing.expectEqualStrings("myrepo", cfg.main_repo.?);
-}
-
-test "parseConfig empty" {
-    const content = ".{\n}\n";
-    var cfg = try parseConfig(std.testing.allocator, content);
-    defer cfg.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 0), cfg.sync_patterns.len);
-    try std.testing.expect(cfg.main_repo == null);
 }

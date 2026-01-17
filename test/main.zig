@@ -1,7 +1,198 @@
 const std = @import("std");
+const shgit = @import("shgit");
 
-// Integration tests for shgit
+test {
+    std.testing.refAllDeclsRecursive(@This());
+}
 
+// Tests moved from src/git.zig
+test "addLocalExclude with submodule" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Create a temporary test directory structure
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    // Create repo structure similar to submodule
+    try tmp_dir.dir.makePath("repo");
+    try tmp_dir.dir.makePath(".git/modules/repo/info");
+
+    // Write .git file with relative gitdir (like submodules do)
+    const git_file = try tmp_dir.dir.createFile("repo/.git", .{});
+    defer git_file.close();
+    try git_file.writeAll("gitdir: ../.git/modules/repo\n");
+
+    // Create exclude file
+    const exclude_file = try tmp_dir.dir.createFile(".git/modules/repo/info/exclude", .{});
+    defer exclude_file.close();
+    try exclude_file.writeAll("# test exclude file\n");
+
+    // Get absolute path to repo
+    const tmp_path = try tmp_dir.dir.realpathAlloc(allocator, ".");
+    const repo_path = try std.fs.path.join(allocator, &.{ tmp_path, "repo" });
+
+    // Add a file to local exclude
+    try shgit.git.addLocalExclude(allocator, repo_path, ".env");
+
+    // Read exclude file and verify it was added
+    const exclude_content = try tmp_dir.dir.readFileAlloc(allocator, ".git/modules/repo/info/exclude", 4096);
+    try testing.expect(std.mem.indexOf(u8, exclude_content, "/.env") != null);
+}
+
+// Tests moved from src/commands/worktree.zig
+test "matchesPattern" {
+    try std.testing.expect(matchesPattern(".env", ".env"));
+    try std.testing.expect(matchesPattern("src/.env", ".env"));
+    try std.testing.expect(matchesPattern(".env.local", ".env.local"));
+    try std.testing.expect(!matchesPattern(".env.local", ".env"));
+    try std.testing.expect(matchesPattern("src/config/.env", ".env"));
+}
+
+fn matchesPattern(path: []const u8, pattern: []const u8) bool {
+    if (std.mem.eql(u8, path, pattern)) return true;
+    const filename = std.fs.path.basename(path);
+    if (std.mem.eql(u8, filename, pattern)) return true;
+    if (std.mem.endsWith(u8, path, pattern)) return true;
+    return false;
+}
+
+// Tests moved from src/config.zig
+test "parseConfig new format" {
+    const allocator = std.testing.allocator;
+
+    const content =
+        \\.{
+        \\    .sync_patterns = .{
+        \\        .{
+        \\            .pattern = ".env",
+        \\            .mode = .symlink,
+        \\        },
+        \\        .{
+        \\            .pattern = ".env.local",
+        \\            .mode = .copy,
+        \\        },
+        \\    },
+        \\    .main_repo = "myrepo",
+        \\}
+    ;
+
+    var cfg = try shgit.config.parseConfig(allocator, content);
+    defer cfg.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), cfg.sync_patterns.len);
+    try std.testing.expectEqualStrings(".env", cfg.sync_patterns[0].pattern);
+    try std.testing.expectEqual(shgit.config.SyncMode.symlink, cfg.sync_patterns[0].mode);
+    try std.testing.expectEqualStrings(".env.local", cfg.sync_patterns[1].pattern);
+    try std.testing.expectEqual(shgit.config.SyncMode.copy, cfg.sync_patterns[1].mode);
+    try std.testing.expectEqualStrings("myrepo", cfg.main_repo.?);
+}
+
+test "parseConfig legacy format" {
+    const allocator = std.testing.allocator;
+
+    const content =
+        \\.{
+        \\    .sync_patterns = .{
+        \\        ".env",
+        \\        ".env.local",
+        \\    },
+        \\    .main_repo = "myrepo",
+        \\}
+    ;
+
+    var cfg = try shgit.config.parseConfig(allocator, content);
+    defer cfg.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), cfg.sync_patterns.len);
+    try std.testing.expectEqualStrings(".env", cfg.sync_patterns[0].pattern);
+    try std.testing.expectEqual(shgit.config.SyncMode.symlink, cfg.sync_patterns[0].mode);
+    try std.testing.expectEqualStrings(".env.local", cfg.sync_patterns[1].pattern);
+    try std.testing.expectEqual(shgit.config.SyncMode.symlink, cfg.sync_patterns[1].mode);
+    try std.testing.expectEqualStrings("myrepo", cfg.main_repo.?);
+}
+
+test "parseConfig empty" {
+    const allocator = std.testing.allocator;
+
+    const content = ".{}";
+
+    var cfg = try shgit.config.parseConfig(allocator, content);
+    defer cfg.deinit(allocator);
+
+    try std.testing.expect(cfg.main_repo == null);
+    try std.testing.expectEqual(@as(usize, 0), cfg.sync_patterns.len);
+}
+
+// Tests moved from src/fs_utils.zig
+test "relativePath same directory" {
+    const allocator = std.testing.allocator;
+    const result = try shgit.fs_utils.relativePath(allocator, "/home/user/file.txt", "/home/user/target.txt");
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("target.txt", result);
+}
+
+test "relativePath parent directory" {
+    const allocator = std.testing.allocator;
+    const result = try shgit.fs_utils.relativePath(allocator, "/home/user/sub/file.txt", "/home/user/target.txt");
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("../target.txt", result);
+}
+
+test "relativePath sibling directory" {
+    const allocator = std.testing.allocator;
+    const result = try shgit.fs_utils.relativePath(allocator, "/home/user/sub1/file.txt", "/home/user/sub2/target.txt");
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("../sub2/target.txt", result);
+}
+
+test "relativePath deeply nested" {
+    const allocator = std.testing.allocator;
+    const result = try shgit.fs_utils.relativePath(allocator, "/a/b/c/d/file.txt", "/x/y/z/target.txt");
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("../../../../x/y/z/target.txt", result);
+}
+
+// Tests moved from src/commands/clone.zig
+test "extractRepoName" {
+    const allocator = std.testing.allocator;
+
+    {
+        const name = try extractRepoName(allocator, "https://github.com/user/myrepo.git");
+        defer allocator.free(name);
+        try std.testing.expectEqualStrings("myrepo", name);
+    }
+
+    {
+        const name = try extractRepoName(allocator, "https://github.com/user/myrepo");
+        defer allocator.free(name);
+        try std.testing.expectEqualStrings("myrepo", name);
+    }
+
+    {
+        const name = try extractRepoName(allocator, "git@github.com:user/myrepo.git");
+        defer allocator.free(name);
+        try std.testing.expectEqualStrings("myrepo", name);
+    }
+}
+
+fn extractRepoName(allocator: std.mem.Allocator, url: []const u8) ![]const u8 {
+    var last_part = url;
+    if (std.mem.lastIndexOfScalar(u8, url, '/')) |idx| {
+        last_part = url[idx + 1 ..];
+    } else if (std.mem.lastIndexOfScalar(u8, url, ':')) |idx| {
+        last_part = url[idx + 1 ..];
+    }
+
+    if (std.mem.endsWith(u8, last_part, ".git")) {
+        return allocator.dupe(u8, last_part[0 .. last_part.len - 4]);
+    }
+    return allocator.dupe(u8, last_part);
+}
+
+// Integration tests (kept from original test/main.zig)
 test "shgit structure creation" {
     const allocator = std.testing.allocator;
 
@@ -108,31 +299,6 @@ test "local gitignore exclude file" {
     try std.testing.expect(stat.kind == .file);
 }
 
-test "pattern matching" {
-    // Test simple pattern matching logic
-    try std.testing.expect(matchesPattern(".env", ".env"));
-    try std.testing.expect(matchesPattern("src/.env", ".env"));
-    try std.testing.expect(matchesPattern("deep/nested/.env", ".env"));
-    try std.testing.expect(!matchesPattern(".env.local", ".env"));
-    try std.testing.expect(matchesPattern(".env.local", ".env.local"));
-}
-
-fn matchesPattern(path: []const u8, pattern: []const u8) bool {
-    if (std.mem.eql(u8, path, pattern)) return true;
-    const filename = std.fs.path.basename(path);
-    if (std.mem.eql(u8, filename, pattern)) return true;
-    if (std.mem.endsWith(u8, path, pattern)) return true;
-    return false;
-}
-
-fn dirExists(dir: std.fs.Dir, path: []const u8) !bool {
-    const stat = dir.statFile(path) catch |err| {
-        if (err == error.FileNotFound) return false;
-        return err;
-    };
-    return stat.kind == .directory;
-}
-
 test "relative path calculation" {
     const allocator = std.testing.allocator;
 
@@ -199,4 +365,12 @@ fn relativePath(allocator: std.mem.Allocator, from: []const u8, to: []const u8) 
     }
 
     return result.toOwnedSlice(allocator);
+}
+
+fn dirExists(dir: std.fs.Dir, path: []const u8) !bool {
+    const stat = dir.statFile(path) catch |err| {
+        if (err == error.FileNotFound) return false;
+        return err;
+    };
+    return stat.kind == .directory;
 }

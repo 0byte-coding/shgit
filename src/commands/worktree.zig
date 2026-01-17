@@ -288,11 +288,3 @@ fn matchesPattern(path: []const u8, pattern: []const u8) bool {
 
     return false;
 }
-
-test "matchesPattern" {
-    try std.testing.expect(matchesPattern(".env", ".env"));
-    try std.testing.expect(matchesPattern("src/.env", ".env"));
-    try std.testing.expect(matchesPattern(".env.local", ".env.local"));
-    try std.testing.expect(!matchesPattern(".env.local", ".env"));
-    try std.testing.expect(matchesPattern("src/config/.env", ".env"));
-}

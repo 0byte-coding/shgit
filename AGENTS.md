@@ -98,9 +98,22 @@ try writer.flush();
 ```
 
 ### Testing
-- Unit tests go in the same file as the code being tested
-- Integration tests go in `test/main.zig`
+- **All tests go in the `test/` folder, NOT in source files**
+- Tests import the shgit module via `const shgit = @import("shgit")`
+- Unit tests for specific modules go in `test/main.zig`
+- Integration tests also go in `test/main.zig`
+- The `src/root.zig` file exports all modules for testing
+- The `test/main.zig` file must include:
+  ```zig
+  const std = @import("std");
+  const shgit = @import("shgit");
+
+  test {
+      std.testing.refAllDeclsRecursive(@This());
+  }
+  ```
 - Use `std.testing.allocator` for memory leak detection
+- Access modules via `shgit.module_name` (e.g., `shgit.git`, `shgit.config`, `shgit.fs_utils`)
 
 ## CLI Argument Parsing (argzon)
 Arguments defined in `src/args.zon` using ZON format:

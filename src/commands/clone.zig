@@ -118,10 +118,3 @@ fn extractRepoName(url: []const u8) ?[]const u8 {
     if (name.len > 0) return name;
     return null;
 }
-
-test "extractRepoName" {
-    try std.testing.expectEqualStrings("repo", extractRepoName("https://github.com/user/repo.git").?);
-    try std.testing.expectEqualStrings("repo", extractRepoName("https://github.com/user/repo").?);
-    try std.testing.expectEqualStrings("repo", extractRepoName("git@github.com:user/repo.git").?);
-    try std.testing.expectEqualStrings("myrepo", extractRepoName("/path/to/myrepo").?);
-}
