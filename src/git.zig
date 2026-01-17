@@ -30,10 +30,29 @@ pub fn addSubmodule(allocator: std.mem.Allocator, cwd: []const u8, url: []const 
     try runGit(allocator, cwd, &.{ "submodule", "add", url, path });
 }
 
-/// Add a git worktree
-pub fn addWorktree(allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8, branch: []const u8) !void {
-    log.info("adding worktree {s} with branch {s}", .{ worktree_path, branch });
-    try runGit(allocator, repo_path, &.{ "worktree", "add", "-b", branch, worktree_path });
+/// Add a git worktree (simple wrapper)
+pub fn addWorktree(allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8, branch: []const u8, create_branch: bool) !void {
+    var args: std.ArrayList([]const u8) = .empty;
+    defer args.deinit(allocator);
+
+    try args.append(allocator, "worktree");
+    try args.append(allocator, "add");
+
+    if (create_branch) {
+        try args.append(allocator, "-b");
+        try args.append(allocator, branch);
+        log.info("creating new worktree {s} with new branch {s}", .{ worktree_path, branch });
+    } else {
+        log.info("creating worktree {s} from existing branch {s}", .{ worktree_path, branch });
+    }
+
+    try args.append(allocator, worktree_path);
+
+    if (!create_branch) {
+        try args.append(allocator, branch);
+    }
+
+    try runGit(allocator, repo_path, args.items);
 }
 
 /// Remove a git worktree

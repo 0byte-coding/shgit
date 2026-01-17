@@ -57,13 +57,18 @@
                             .type = "string",
                             .description = "Name for the worktree",
                         },
+                        .{
+                            .meta = .BRANCH,
+                            .type = "string",
+                            .description = "Branch to checkout (not needed with -b)",
+                        },
                     },
                     .options = .{
                         .{
                             .short = 'b',
-                            .long = "branch",
+                            .long = "new-branch",
                             .type = "?string",
-                            .description = "Branch name (default: same as worktree name)",
+                            .description = "Create new branch with this name",
                         },
                     },
                 },
