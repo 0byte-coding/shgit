@@ -45,6 +45,17 @@
             },
         },
         .{
+            .name = "unlink",
+            .description = "Remove symlinked file from all repos/worktrees and local gitignore",
+            .positionals = .{
+                .{
+                    .meta = .PATH,
+                    .type = "string",
+                    .description = "Relative path to unlink (e.g., packages/supabase/config.toml)",
+                },
+            },
+        },
+        .{
             .name = "worktree",
             .description = "Manage git worktrees with proper symlinks",
             .subcommands = .{

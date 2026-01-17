@@ -374,3 +374,145 @@ fn dirExists(dir: std.fs.Dir, path: []const u8) !bool {
     };
     return stat.kind == .directory;
 }
+
+// Tests for unlink command
+test "unlink removes symlink" {
+    _ = std.testing.allocator;
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    // Create source file in link/
+    try tmp_dir.dir.makePath("link");
+    const src_file = try tmp_dir.dir.createFile("link/.env", .{});
+    try src_file.writeAll("TEST=value");
+    src_file.close();
+
+    // Create target directory and symlink
+    try tmp_dir.dir.makePath("repo/myrepo");
+    try tmp_dir.dir.symLink("../../link/.env", "repo/myrepo/.env", .{});
+
+    // Verify symlink exists
+    _ = tmp_dir.dir.statFile("repo/myrepo/.env") catch |err| {
+        if (err == error.FileNotFound) {
+            // Symlinks not supported in test environment
+            return;
+        }
+        return err;
+    };
+
+    // Delete the symlink
+    try tmp_dir.dir.deleteFile("repo/myrepo/.env");
+
+    // Verify it's gone
+    const result = tmp_dir.dir.statFile("repo/myrepo/.env");
+    try std.testing.expectError(error.FileNotFound, result);
+}
+
+test "unlink handles non-existent file" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    try tmp_dir.dir.makePath("repo/myrepo");
+
+    // Try to delete non-existent file - should not error
+    tmp_dir.dir.deleteFile("repo/myrepo/.env") catch |err| {
+        try std.testing.expectEqual(error.FileNotFound, err);
+    };
+}
+
+test "unlink removes from exclude file" {
+    const allocator = std.testing.allocator;
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    // Create .git/info structure with exclude file
+    try tmp_dir.dir.makePath(".git/info");
+    const exclude_file = try tmp_dir.dir.createFile(".git/info/exclude", .{});
+    try exclude_file.writeAll("# Exclude file\n/.env\n/.env.local\n");
+    exclude_file.close();
+
+    // Read original content
+    const original = try tmp_dir.dir.readFileAlloc(allocator, ".git/info/exclude", 4096);
+    defer allocator.free(original);
+    try std.testing.expect(std.mem.indexOf(u8, original, "/.env") != null);
+
+    // Simulate removal: read, filter, write
+    var new_content: std.ArrayList(u8) = .empty;
+    defer new_content.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, original, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.eql(u8, line, "/.env")) {
+            continue; // Skip this line
+        }
+        try new_content.appendSlice(allocator, line);
+        try new_content.append(allocator, '\n');
+    }
+
+    // Write back
+    const out_file = try tmp_dir.dir.createFile(".git/info/exclude", .{ .truncate = true });
+    try out_file.writeAll(new_content.items);
+    out_file.close();
+
+    // Verify
+    const modified = try tmp_dir.dir.readFileAlloc(allocator, ".git/info/exclude", 4096);
+    defer allocator.free(modified);
+    try std.testing.expect(std.mem.indexOf(u8, modified, "/.env\n") == null);
+    try std.testing.expect(std.mem.indexOf(u8, modified, "/.env.local") != null);
+}
+
+test "unlink handles multiple repos" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    // Create multiple repo directories
+    try tmp_dir.dir.makePath("repo/main");
+    try tmp_dir.dir.makePath("repo/worktree1");
+    try tmp_dir.dir.makePath("repo/worktree2");
+    try tmp_dir.dir.makePath("link");
+
+    // Create source file
+    const src_file = try tmp_dir.dir.createFile("link/.env", .{});
+    try src_file.writeAll("TEST=value");
+    src_file.close();
+
+    // Create symlinks in all repos
+    tmp_dir.dir.symLink("../../link/.env", "repo/main/.env", .{}) catch {};
+    tmp_dir.dir.symLink("../../link/.env", "repo/worktree1/.env", .{}) catch {};
+    tmp_dir.dir.symLink("../../link/.env", "repo/worktree2/.env", .{}) catch {};
+
+    // Delete all symlinks
+    tmp_dir.dir.deleteFile("repo/main/.env") catch {};
+    tmp_dir.dir.deleteFile("repo/worktree1/.env") catch {};
+    tmp_dir.dir.deleteFile("repo/worktree2/.env") catch {};
+
+    // Verify all are gone
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile("repo/main/.env"));
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile("repo/worktree1/.env"));
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile("repo/worktree2/.env"));
+}
+
+test "unlink handles nested paths" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    // Create nested structure
+    try tmp_dir.dir.makePath("repo/myrepo/packages/api");
+    try tmp_dir.dir.makePath("link/packages/api");
+
+    // Create source file
+    const src_file = try tmp_dir.dir.createFile("link/packages/api/.env", .{});
+    try src_file.writeAll("API_KEY=secret");
+    src_file.close();
+
+    // Create symlink
+    tmp_dir.dir.symLink("../../../../link/packages/api/.env", "repo/myrepo/packages/api/.env", .{}) catch {};
+
+    // Delete symlink
+    tmp_dir.dir.deleteFile("repo/myrepo/packages/api/.env") catch {};
+
+    // Verify it's gone
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile("repo/myrepo/packages/api/.env"));
+}

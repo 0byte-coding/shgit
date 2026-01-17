@@ -4,6 +4,7 @@ const argzon = @import("argzon");
 const config = @import("config.zig");
 const clone = @import("commands/clone.zig");
 const link = @import("commands/link.zig");
+const unlink = @import("commands/unlink.zig");
 const worktree = @import("commands/worktree.zig");
 const sync = @import("commands/sync.zig");
 const init_cmd = @import("commands/init.zig");
@@ -41,6 +42,7 @@ pub fn main() !void {
         switch (sub) {
             .clone => |clone_args| try clone.execute(gpa, clone_args, verbose),
             .link => |link_args| try link.execute(gpa, link_args, verbose),
+            .unlink => |unlink_args| try unlink.execute(gpa, unlink_args, verbose),
             .worktree => |wt_args| try worktree.execute(gpa, wt_args, verbose),
             .sync => try sync.execute(gpa, verbose),
             .init => try init_cmd.execute(gpa, verbose),
