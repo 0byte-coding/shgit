@@ -7,6 +7,7 @@ const link = @import("commands/link.zig");
 const worktree = @import("commands/worktree.zig");
 const sync = @import("commands/sync.zig");
 const init_cmd = @import("commands/init.zig");
+const version = @import("commands/version.zig");
 
 const log = std.log.scoped(.shgit);
 
@@ -43,6 +44,7 @@ pub fn main() !void {
             .worktree => |wt_args| try worktree.execute(gpa, wt_args, verbose),
             .sync => try sync.execute(gpa, verbose),
             .init => try init_cmd.execute(gpa, verbose),
+            .version => try version.execute(gpa, verbose),
         }
     } else {
         var stdout_buf: [argzon.MAX_BUF_SIZE]u8 = undefined;

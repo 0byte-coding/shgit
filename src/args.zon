@@ -97,5 +97,9 @@
             .name = "init",
             .description = "Initialize shgit in an existing directory structure",
         },
+        .{
+            .name = "version",
+            .description = "Show shgit version",
+        },
     },
 }

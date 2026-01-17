@@ -26,6 +26,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("asset/root.zig"),
     });
 
+    // Build options module (version info)
+    const build_options = b.addOptions();
+    // Read version from build.zig.zon
+    const build_zon = @import("build.zig.zon");
+    build_options.addOption([]const u8, "version", build_zon.version);
+    const build_options_mod = build_options.createModule();
+
     if (cross_compile) {
         // Build for all targets
         for (cross_targets) |t| {
@@ -44,6 +51,7 @@ pub fn build(b: *std.Build) void {
                     .imports = &.{
                         .{ .name = "argzon", .module = argzon_mod },
                         .{ .name = "asset", .module = asset_mod },
+                        .{ .name = "build_options", .module = build_options_mod },
                     },
                 }),
             });
@@ -78,6 +86,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "argzon", .module = argzon_mod },
                     .{ .name = "asset", .module = asset_mod },
+                    .{ .name = "build_options", .module = build_options_mod },
                 },
             }),
         });
