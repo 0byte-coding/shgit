@@ -66,6 +66,52 @@ pub fn listWorktrees(allocator: std.mem.Allocator, repo_path: []const u8) !void 
     try runGit(allocator, repo_path, &.{ "worktree", "list" });
 }
 
+/// Get list of worktree paths
+pub fn getWorktreePaths(allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+
+    try argv.append(allocator, "git");
+    try argv.append(allocator, "worktree");
+    try argv.append(allocator, "list");
+    try argv.append(allocator, "--porcelain");
+
+    var child = std.process.Child.init(argv.items, allocator);
+    child.cwd = repo_path;
+    child.stderr_behavior = .Inherit;
+    child.stdout_behavior = .Pipe;
+
+    try child.spawn();
+
+    const stdout = try child.stdout.?.readToEndAlloc(allocator, 10 * 1024 * 1024);
+    defer allocator.free(stdout);
+
+    _ = try child.wait();
+
+    // Parse porcelain format
+    // Each worktree is separated by blank line
+    // Format:
+    // worktree /path/to/worktree
+    // HEAD ...
+    // branch ...
+    //
+    var paths: std.ArrayList([]const u8) = .empty;
+    errdefer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+
+    var lines = std.mem.splitScalar(u8, stdout, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "worktree ")) {
+            const path = line[9..]; // Skip "worktree "
+            try paths.append(allocator, try allocator.dupe(u8, path));
+        }
+    }
+
+    return try paths.toOwnedSlice(allocator);
+}
+
 /// Add a path to .git/info/exclude (local gitignore)
 pub fn addLocalExclude(allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !void {
     // Find .git directory (could be a file for worktrees)

@@ -38,6 +38,32 @@ pub fn execute(allocator: std.mem.Allocator, args: anytype, verbose: bool) !void
     // Walk link directory and create symlinks
     try linkDirectory(allocator, link_dir, target_dir, "");
 
+    // Also link to all worktrees
+    const worktree_paths = git.getWorktreePaths(allocator, target_dir) catch |err| {
+        if (err == error.FileNotFound) {
+            // Not a git repo or no worktrees, skip
+            log.info("linking complete", .{});
+            return;
+        }
+        return err;
+    };
+    defer {
+        for (worktree_paths) |p| allocator.free(p);
+        allocator.free(worktree_paths);
+    }
+
+    // Link to each worktree (skip the main repo which is already linked)
+    for (worktree_paths) |worktree_path| {
+        // Skip if it's the same as target_dir
+        if (std.mem.eql(u8, worktree_path, target_dir)) continue;
+
+        // Get the worktree name (last component of path)
+        const worktree_name = std.fs.path.basename(worktree_path);
+        log.info("linking files from link/ to repo/{s}/", .{worktree_name});
+
+        try linkDirectory(allocator, link_dir, worktree_path, "");
+    }
+
     log.info("linking complete", .{});
 }
 
