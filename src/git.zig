@@ -82,7 +82,7 @@ pub fn addLocalExclude(allocator: std.mem.Allocator, repo_path: []const u8, rel_
     };
 
     if (stat.kind == .file) {
-        // Worktree - .git is a file pointing to actual git dir
+        // Worktree/submodule - .git is a file pointing to actual git dir
         const file = try std.fs.cwd().openFile(git_path, .{});
         defer file.close();
 
@@ -96,7 +96,13 @@ pub fn addLocalExclude(allocator: std.mem.Allocator, repo_path: []const u8, rel_
 
         // Parse "gitdir: /path/to/git"
         if (std.mem.startsWith(u8, first_line, "gitdir: ")) {
-            actual_git_dir = try allocator.dupe(u8, first_line[8..]);
+            const gitdir_path = first_line[8..];
+            // If path is relative, resolve it relative to repo_path
+            if (std.fs.path.isAbsolute(gitdir_path)) {
+                actual_git_dir = try allocator.dupe(u8, gitdir_path);
+            } else {
+                actual_git_dir = try std.fs.path.join(allocator, &.{ repo_path, gitdir_path });
+            }
             allocated_git_dir = true;
         } else {
             log.warn("unexpected .git file content", .{});
@@ -151,6 +157,42 @@ pub fn addLocalExclude(allocator: std.mem.Allocator, repo_path: []const u8, rel_
     try file_writer.interface.flush();
 
     log.debug("added {s} to local exclude", .{rel_path});
+}
+
+test "addLocalExclude with submodule" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Create a temporary test directory structure
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    // Create repo structure similar to submodule
+    try tmp_dir.dir.makePath("repo");
+    try tmp_dir.dir.makePath(".git/modules/repo/info");
+
+    // Write .git file with relative gitdir (like submodules do)
+    const git_file = try tmp_dir.dir.createFile("repo/.git", .{});
+    defer git_file.close();
+    try git_file.writeAll("gitdir: ../.git/modules/repo\n");
+
+    // Create exclude file
+    const exclude_file = try tmp_dir.dir.createFile(".git/modules/repo/info/exclude", .{});
+    defer exclude_file.close();
+    try exclude_file.writeAll("# test exclude file\n");
+
+    // Get absolute path to repo
+    const tmp_path = try tmp_dir.dir.realpathAlloc(allocator, ".");
+    const repo_path = try std.fs.path.join(allocator, &.{ tmp_path, "repo" });
+
+    // Add a file to local exclude
+    try addLocalExclude(allocator, repo_path, ".env");
+
+    // Read exclude file and verify it was added
+    const exclude_content = try tmp_dir.dir.readFileAlloc(allocator, ".git/modules/repo/info/exclude", 4096);
+    try testing.expect(std.mem.indexOf(u8, exclude_content, "/.env") != null);
 }
 
 test "git module compiles" {
