@@ -52,8 +52,15 @@ pub fn execute(allocator: std.mem.Allocator, args: anytype, verbose: bool) !void
         allocator.free(worktree_paths);
     }
 
+    // Construct the repo directory base path for filtering
+    const repo_base = try std.fs.path.join(allocator, &.{ shgit_root, config.REPO_DIR });
+    defer allocator.free(repo_base);
+
     // Link to each worktree (skip the main repo which is already linked)
     for (worktree_paths) |worktree_path| {
+        // Skip if it's not in the repo/ directory (e.g., .git/modules paths for submodules)
+        if (!std.mem.startsWith(u8, worktree_path, repo_base)) continue;
+
         // Skip if it's the same as target_dir
         if (std.mem.eql(u8, worktree_path, target_dir)) continue;
 
