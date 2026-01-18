@@ -23,12 +23,15 @@ pub fn execute(allocator: std.mem.Allocator, args: anytype, verbose: bool) !void
 
 fn executeAdd(allocator: std.mem.Allocator, args: anytype) !void {
     const name = args.positionals.NAME;
-    const branch_positional = args.positionals.BRANCH;
+    const commitish = args.positionals.COMMITISH;
     const new_branch = args.options.@"new-branch";
 
-    // Determine branch and whether to create it
-    const branch: []const u8 = if (new_branch) |b| b else branch_positional;
+    // Determine branch and start point based on -b flag
+    // If -b is provided: commitish is the start point, new_branch is the branch name
+    // If -b is not provided: commitish is the branch to checkout
+    const branch: []const u8 = if (new_branch) |nb| nb else commitish;
     const create_branch = new_branch != null;
+    const start_point = if (new_branch != null) commitish else null;
 
     const shgit_root = try config.findShgitRoot(allocator) orelse {
         log.err("not in a shgit project", .{});
@@ -51,7 +54,7 @@ fn executeAdd(allocator: std.mem.Allocator, args: anytype) !void {
     defer allocator.free(worktree_path);
 
     // Create git worktree
-    try git.addWorktree(allocator, main_repo_path, worktree_path, branch, create_branch);
+    try git.addWorktree(allocator, main_repo_path, worktree_path, branch, create_branch, start_point);
 
     // Link files from link/ to new worktree
     const link_dir = try std.fs.path.join(allocator, &.{ shgit_root, config.LINK_DIR });

@@ -69,9 +69,9 @@
                             .description = "Name for the worktree",
                         },
                         .{
-                            .meta = .BRANCH,
+                            .meta = .COMMITISH,
                             .type = "string",
-                            .description = "Branch to checkout (not needed with -b)",
+                            .description = "Branch to checkout, or start point when using -b",
                         },
                     },
                     .options = .{
