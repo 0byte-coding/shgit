@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
 
     // Store exe for run step and tests (only used in non-cross mode)
     var default_exe: ?*std.Build.Step.Compile = null;
-    var argzon_mod_for_tests: ?*std.Build.Module = null;
+    var clap_mod_for_tests: ?*std.Build.Module = null;
 
     // Asset module (always created)
     const asset_mod = b.addModule("asset", .{
@@ -36,11 +36,11 @@ pub fn build(b: *std.Build) void {
     if (cross_compile) {
         // Build for all targets
         for (cross_targets) |t| {
-            const argzon_dep = b.dependency("argzon", .{
+            const clap_dep = b.dependency("clap", .{
                 .target = b.resolveTargetQuery(t),
                 .optimize = optimize,
             });
-            const argzon_mod = argzon_dep.module("argzon");
+            const clap_mod = clap_dep.module("clap");
 
             const exe = b.addExecutable(.{
                 .name = "shgit",
@@ -49,7 +49,7 @@ pub fn build(b: *std.Build) void {
                     .target = b.resolveTargetQuery(t),
                     .optimize = optimize,
                     .imports = &.{
-                        .{ .name = "argzon", .module = argzon_mod },
+                        .{ .name = "clap", .module = clap_mod },
                         .{ .name = "asset", .module = asset_mod },
                         .{ .name = "build_options", .module = build_options_mod },
                     },
@@ -69,12 +69,12 @@ pub fn build(b: *std.Build) void {
         }
     } else {
         // Default: build for current target only
-        const argzon_dep = b.dependency("argzon", .{
+        const clap_dep = b.dependency("clap", .{
             .target = target,
             .optimize = optimize,
         });
-        const argzon_mod = argzon_dep.module("argzon");
-        argzon_mod_for_tests = argzon_mod;
+        const clap_mod = clap_dep.module("clap");
+        clap_mod_for_tests = clap_mod;
 
         // Main executable
         const exe = b.addExecutable(.{
@@ -84,7 +84,7 @@ pub fn build(b: *std.Build) void {
                 .target = target,
                 .optimize = optimize,
                 .imports = &.{
-                    .{ .name = "argzon", .module = argzon_mod },
+                    .{ .name = "clap", .module = clap_mod },
                     .{ .name = "asset", .module = asset_mod },
                     .{ .name = "build_options", .module = build_options_mod },
                 },
@@ -107,7 +107,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // Tests (only available in default mode)
-    if (argzon_mod_for_tests) |_| {
+    if (clap_mod_for_tests) |_| {
         // Create shgit module for tests
         const shgit_mod = b.addModule("shgit", .{
             .root_source_file = b.path("src/root.zig"),

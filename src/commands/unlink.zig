@@ -4,10 +4,14 @@ const git = @import("../git.zig");
 
 const log = std.log.scoped(.unlink);
 
-pub fn execute(allocator: std.mem.Allocator, args: anytype, verbose: bool) !void {
+pub const UnlinkArgs = struct {
+    path: []const u8,
+};
+
+pub fn execute(allocator: std.mem.Allocator, args: UnlinkArgs, verbose: bool) !void {
     _ = verbose;
 
-    const rel_path = args.positionals.PATH;
+    const rel_path = args.path;
 
     // Find shgit root
     const shgit_root = try config.findShgitRoot(allocator) orelse {

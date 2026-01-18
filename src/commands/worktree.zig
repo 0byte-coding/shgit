@@ -6,25 +6,22 @@ const link_cmd = @import("link.zig");
 
 const log = std.log.scoped(.worktree);
 
-pub fn execute(allocator: std.mem.Allocator, args: anytype, verbose: bool) !void {
+pub const WorktreeAddArgs = struct {
+    name: []const u8,
+    commitish: []const u8,
+    new_branch: ?[]const u8 = null,
+};
+
+pub const WorktreeRemoveArgs = struct {
+    name: []const u8,
+};
+
+pub fn executeAdd(allocator: std.mem.Allocator, args: WorktreeAddArgs, verbose: bool) !void {
     _ = verbose;
 
-    if (args.subcommands_opt) |sub| {
-        switch (sub) {
-            .add => |add_args| try executeAdd(allocator, add_args),
-            .remove => |remove_args| try executeRemove(allocator, remove_args),
-            .list => try executeList(allocator),
-        }
-    } else {
-        log.err("no worktree subcommand specified", .{});
-        return error.NoSubcommand;
-    }
-}
-
-fn executeAdd(allocator: std.mem.Allocator, args: anytype) !void {
-    const name = args.positionals.NAME;
-    const commitish = args.positionals.COMMITISH;
-    const new_branch = args.options.@"new-branch";
+    const name = args.name;
+    const commitish = args.commitish;
+    const new_branch = args.new_branch;
 
     // Determine branch and start point based on -b flag
     // If -b is provided: commitish is the start point, new_branch is the branch name
@@ -68,8 +65,10 @@ fn executeAdd(allocator: std.mem.Allocator, args: anytype) !void {
     log.info("worktree created at repo/{s}/", .{name});
 }
 
-fn executeRemove(allocator: std.mem.Allocator, args: anytype) !void {
-    const name = args.positionals.NAME;
+pub fn executeRemove(allocator: std.mem.Allocator, args: WorktreeRemoveArgs, verbose: bool) !void {
+    _ = verbose;
+
+    const name = args.name;
 
     const shgit_root = try config.findShgitRoot(allocator) orelse {
         log.err("not in a shgit project", .{});
@@ -101,7 +100,8 @@ fn executeRemove(allocator: std.mem.Allocator, args: anytype) !void {
     log.info("removed worktree '{s}'", .{name});
 }
 
-fn executeList(allocator: std.mem.Allocator) !void {
+pub fn executeList(allocator: std.mem.Allocator, verbose: bool) !void {
+    _ = verbose;
     const shgit_root = try config.findShgitRoot(allocator) orelse {
         log.err("not in a shgit project", .{});
         return error.NotShgitProject;

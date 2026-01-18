@@ -5,7 +5,11 @@ const git = @import("../git.zig");
 
 const log = std.log.scoped(.link);
 
-pub fn execute(allocator: std.mem.Allocator, args: anytype, verbose: bool) !void {
+pub const LinkArgs = struct {
+    target: ?[]const u8 = null,
+};
+
+pub fn execute(allocator: std.mem.Allocator, args: LinkArgs, verbose: bool) !void {
     _ = verbose;
 
     // Find shgit root
@@ -22,7 +26,7 @@ pub fn execute(allocator: std.mem.Allocator, args: anytype, verbose: bool) !void
     defer cfg.deinit(allocator);
 
     // Determine target
-    const target_name = args.options.target orelse cfg.main_repo orelse {
+    const target_name = args.target orelse cfg.main_repo orelse {
         log.err("no target specified and no main_repo in config", .{});
         return error.NoTarget;
     };

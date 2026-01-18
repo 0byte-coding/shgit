@@ -17,8 +17,7 @@ zig build test -Dtest-filter="pattern"          # Run single test by name filter
 ```
 shgit/
   src/
-    main.zig          # Entry point, CLI parsing with argzon
-    args.zon          # CLI argument definitions (ZON format)
+    main.zig          # Entry point, CLI parsing with zig-clap
     config.zig        # Config loading/saving, shgit structure
     git.zig           # Git command wrappers
     fs_utils.zig      # Filesystem utilities (relative path calc)
@@ -37,10 +36,10 @@ shgit/
 ## Code Style Guidelines
 
 ### Imports
-Order: 1) `std` library 2) External deps (e.g., `argzon`) 3) Local modules (relative imports)
+Order: 1) `std` library 2) External deps (e.g., `clap`) 3) Local modules (relative imports)
 ```zig
 const std = @import("std");
-const argzon = @import("argzon");
+const clap = @import("clap");
 const config = @import("../config.zig");
 ```
 
@@ -115,26 +114,33 @@ try writer.flush();
 - Use `std.testing.allocator` for memory leak detection
 - Access modules via `shgit.module_name` (e.g., `shgit.git`, `shgit.config`, `shgit.fs_utils`)
 
-## CLI Argument Parsing (argzon)
-Arguments defined in `src/args.zon` using ZON format:
+## CLI Argument Parsing (zig-clap)
+Arguments are parsed using zig-clap's `parseParamsComptime` in `src/main.zig`:
 ```zig
-.{
-    .name = "command",
-    .description = "Description",
-    .options = .{
-        .{ .long = "option", .type = "?string", .description = "Option" },
-    },
-    .positionals = .{
-        .{ .meta = .NAME, .type = "string", .description = "Positional arg" },
-    },
-    .subcommands = .{ ... },
-}
+const params = comptime clap.parseParamsComptime(
+    \\-h, --help         Display this help and exit.
+    \\-n, --name <str>   Custom name (optional).
+    \\<str>              Required positional argument.
+    \\<str>...           Multiple positional arguments.
+    \\
+);
+
+var diag = clap.Diagnostic{};
+var res = clap.parseEx(clap.Help, &params, clap.parsers.default, &iter, .{
+    .diagnostic = &diag,
+    .allocator = gpa,
+}) catch |err| {
+    reportDiagnostic(&diag, err);
+    return err;
+};
+defer res.deinit();
 ```
+
 Access parsed args:
-- Flags: `args.flags.verbose`
-- Options: `args.options.name` (optional types are `?T`)
-- Positionals: `args.positionals.NAME`
-- Subcommands: `args.subcommands_opt` (note: `_opt` suffix)
+- Flags: `res.args.help` (count, 0 if not set)
+- Options: `res.args.name` (optional, `?[]const u8`)
+- Positionals: `res.positionals[0]` (tuples indexed from 0)
+- Subcommands: Use `terminating_positional` option and enum parsing
 
 ## Configuration Files
 Config stored in `.shgit/config.zon`:
@@ -148,9 +154,14 @@ Config stored in `.shgit/config.zon`:
 ## Key Patterns
 
 ### Command Pattern
-Each command exports an `execute` function:
+Each command defines its argument struct and exports an `execute` function:
 ```zig
-pub fn execute(allocator: std.mem.Allocator, args: anytype, verbose: bool) !void {
+pub const CommandArgs = struct {
+    option: ?[]const u8 = null,
+    required_arg: []const u8,
+};
+
+pub fn execute(allocator: std.mem.Allocator, args: CommandArgs, verbose: bool) !void {
     const shgit_root = try config.findShgitRoot(allocator) orelse {
         log.err("not in a shgit project", .{});
         return error.NotShgitProject;
@@ -177,15 +188,15 @@ try git.addLocalExclude(allocator, repo_path, rel_path);
 ```
 
 ## Dependencies
-- **argzon**: CLI argument parsing (ZON-based)
-  - Add: `zig fetch --save git+https://codeberg.org/tensorush/argzon.git`
+- **zig-clap**: CLI argument parsing
+  - Add: `zig fetch --save https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz`
 
 ## Common Pitfalls
 1. ArrayList in Zig 0.15 uses `.empty` init, not `.init(allocator)`
 2. File.writer() requires a buffer parameter
 3. Use `&writer.interface` to get the actual writer interface
-4. Subcommands are accessed via `subcommands_opt`, not `subcommand`
-5. Optional option types use `?string` in args.zon
+4. For error reporting with clap, use the `reportDiagnostic` helper function
+5. Subcommands use `terminating_positional` to parse first positional as enum
 
 ## Testing Your Changes
 **IMPORTANT**: After making any code changes, always build and run tests to ensure everything still works:

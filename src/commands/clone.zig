@@ -11,9 +11,9 @@ pub const CloneArgs = struct {
     name: ?[]const u8 = null,
 };
 
-pub fn execute(allocator: std.mem.Allocator, args: anytype, verbose: bool) !void {
-    const url = args.positionals.URL;
-    const custom_name = args.options.name;
+pub fn execute(allocator: std.mem.Allocator, args: CloneArgs, verbose: bool) !void {
+    const url = args.url;
+    const custom_name = args.name;
 
     if (verbose) {
         log.debug("cloning {s}", .{url});
