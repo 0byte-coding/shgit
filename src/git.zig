@@ -208,5 +208,5 @@ pub fn addLocalExclude(allocator: std.mem.Allocator, repo_path: []const u8, rel_
     try file_writer.interface.print("/{s}\n", .{rel_path});
     try file_writer.interface.flush();
 
-    log.debug("added {s} to local exclude", .{rel_path});
+    log.debug("added {s} to local exclude at {s}", .{ rel_path, exclude_path });
 }
