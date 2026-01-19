@@ -332,8 +332,7 @@ fn worktreeAddMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbo
     const params = comptime clap.parseParamsComptime(
         \\-h, --help             Display this help and exit.
         \\-b, --new-branch <str> Create new branch with this name.
-        \\<str>
-        \\<str>
+        \\<str>...
         \\
     );
 
@@ -349,7 +348,7 @@ fn worktreeAddMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbo
 
     if (res.args.help != 0) {
         const help_text =
-            \\Usage: shgit worktree add [options] <name> <commitish>
+            \\Usage: shgit worktree add [options] <name> [<commitish>]
             \\
             \\Create a new worktree with symlinks.
             \\
@@ -360,6 +359,7 @@ fn worktreeAddMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbo
             \\Arguments:
             \\  <name>                     Name for the worktree
             \\  <commitish>                Branch to checkout, or start point when using -b
+            \\                             (optional when using -b; defaults to HEAD)
             \\
         ;
         var stdout_buf: [4096]u8 = undefined;
@@ -369,13 +369,25 @@ fn worktreeAddMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbo
         return;
     }
 
-    const name = res.positionals[0] orelse return error.MissingName;
-    const commitish = res.positionals[1] orelse return error.MissingCommitish;
+    // When using <str>..., res.positionals is a tuple with [0] being []const []const u8
+    if (res.positionals[0].len == 0) return error.MissingName;
+
+    const name = res.positionals[0][0];
+    const new_branch = res.args.@"new-branch";
+
+    // When -b is provided, commitish is optional (defaults to HEAD)
+    // When -b is not provided, commitish is required
+    const commitish = if (res.positionals[0].len > 1)
+        res.positionals[0][1]
+    else if (new_branch != null)
+        "HEAD"
+    else
+        return error.MissingCommitish;
 
     const add_args = worktree.WorktreeAddArgs{
         .name = name,
         .commitish = commitish,
-        .new_branch = res.args.@"new-branch",
+        .new_branch = new_branch,
     };
     try worktree.executeAdd(gpa, add_args, verbose);
 }

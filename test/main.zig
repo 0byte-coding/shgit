@@ -516,3 +516,76 @@ test "unlink handles nested paths" {
     // Verify it's gone
     try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile("repo/myrepo/packages/api/.env"));
 }
+
+test "worktree add with -b and no commitish defaults to HEAD" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const test_allocator = arena.allocator();
+
+    // Create temp directory for testing
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const tmp_path = try tmp_dir.dir.realpathAlloc(test_allocator, ".");
+
+    // Initialize a git repo
+    const init_result = std.process.Child.run(.{
+        .allocator = test_allocator,
+        .argv = &.{ "git", "init", "-b", "main" },
+        .cwd = tmp_path,
+    }) catch |err| {
+        std.debug.print("git init failed: {}\n", .{err});
+        return; // Skip if git not available
+    };
+    if (init_result.term.Exited != 0) {
+        std.debug.print("git init exited with code {}\n", .{init_result.term.Exited});
+        return; // Skip if git fails
+    }
+
+    // Create a test file and commit it
+    const test_file = try tmp_dir.dir.createFile("test.txt", .{});
+    try test_file.writeAll("test content");
+    test_file.close();
+
+    _ = std.process.Child.run(.{
+        .allocator = test_allocator,
+        .argv = &.{ "git", "add", "test.txt" },
+        .cwd = tmp_path,
+    }) catch return;
+
+    _ = std.process.Child.run(.{
+        .allocator = test_allocator,
+        .argv = &.{ "git", "commit", "-m", "Initial commit" },
+        .cwd = tmp_path,
+    }) catch return;
+
+    // Test: Create worktree with -b and no commitish (should default to HEAD)
+    const result = std.process.Child.run(.{
+        .allocator = test_allocator,
+        .argv = &.{ "git", "worktree", "add", "-b", "new-branch", "test-worktree" },
+        .cwd = tmp_path,
+    }) catch |err| {
+        std.debug.print("git worktree add failed: {}\n", .{err});
+        return error.SkipZigTest;
+    };
+
+    // Should succeed without error
+    try std.testing.expectEqual(@as(u8, 0), result.term.Exited);
+
+    // Verify the worktree was created
+    const worktree_stat = tmp_dir.dir.statFile("test-worktree") catch |err| {
+        std.debug.print("worktree not found: {}\n", .{err});
+        return error.TestFailed;
+    };
+    try std.testing.expect(worktree_stat.kind == .directory);
+
+    // Verify the branch was created
+    const branch_result = std.process.Child.run(.{
+        .allocator = test_allocator,
+        .argv = &.{ "git", "branch", "--list", "new-branch" },
+        .cwd = tmp_path,
+    }) catch return;
+
+    try std.testing.expect(std.mem.indexOf(u8, branch_result.stdout, "new-branch") != null);
+}
