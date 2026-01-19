@@ -59,8 +59,10 @@ pub fn executeAdd(allocator: std.mem.Allocator, args: WorktreeAddArgs, verbose: 
 
     try linkToWorktree(allocator, link_dir, worktree_path, "");
 
-    // Sync env files if configured
-    try syncEnvFiles(allocator, cfg, main_repo_path, worktree_path);
+    // Sync env files if configured and enabled
+    if (cfg.sync_enabled) {
+        try syncEnvFiles(allocator, cfg, main_repo_path, worktree_path);
+    }
 
     log.info("worktree created at repo/{s}/", .{name});
 }

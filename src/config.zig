@@ -19,6 +19,8 @@ pub const Config = struct {
     sync_patterns: []const SyncPattern = &.{},
     /// Main repo directory name (default: first directory in repo/)
     main_repo: ?[]const u8 = null,
+    /// Whether sync_patterns feature is enabled (default: true)
+    sync_enabled: bool = true,
 
     pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {
         for (self.sync_patterns) |sp| {
@@ -175,6 +177,17 @@ pub fn parseConfig(allocator: std.mem.Allocator, content: []const u8) !Config {
                 cfg.main_repo = try allocator.dupe(u8, rest[1..end]);
             }
         }
+
+        if (std.mem.startsWith(u8, trimmed, ".sync_enabled")) {
+            // Parse .sync_enabled = true/false,
+            const eq_pos = std.mem.indexOf(u8, trimmed, "=") orelse continue;
+            const rest = std.mem.trim(u8, trimmed[eq_pos + 1 ..], " \t,");
+            if (std.mem.indexOf(u8, rest, "false") != null) {
+                cfg.sync_enabled = false;
+            } else if (std.mem.indexOf(u8, rest, "true") != null) {
+                cfg.sync_enabled = true;
+            }
+        }
     }
 
     cfg.sync_patterns = try patterns.toOwnedSlice(allocator);
@@ -204,6 +217,8 @@ pub fn saveConfig(allocator: std.mem.Allocator, shgit_root: []const u8, cfg: Con
     if (cfg.main_repo) |repo| {
         try writer.print("    .main_repo = \"{s}\",\n", .{repo});
     }
+
+    try writer.print("    .sync_enabled = {s},\n", .{if (cfg.sync_enabled) "true" else "false"});
 
     try writer.writeAll("    .sync_patterns = .{\n");
     for (cfg.sync_patterns) |sp| {

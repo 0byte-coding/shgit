@@ -17,6 +17,11 @@ pub fn execute(allocator: std.mem.Allocator, verbose: bool) !void {
     var cfg = try config.loadConfig(allocator, shgit_root);
     defer cfg.deinit(allocator);
 
+    if (!cfg.sync_enabled) {
+        log.info("sync is disabled in config (sync_enabled = false)", .{});
+        return;
+    }
+
     if (cfg.sync_patterns.len == 0) {
         log.info("no sync_patterns configured in .shgit/config.zon", .{});
         return;
