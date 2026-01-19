@@ -60,22 +60,23 @@ fn matchesPattern(path: []const u8, pattern: []const u8) bool {
 }
 
 // Tests moved from src/config.zig
-test "parseConfig new format" {
+test "parseConfig JSON format" {
     const allocator = std.testing.allocator;
 
     const content =
-        \\.{
-        \\    .sync_patterns = .{
-        \\        .{
-        \\            .pattern = ".env",
-        \\            .mode = .symlink,
-        \\        },
-        \\        .{
-        \\            .pattern = ".env.local",
-        \\            .mode = .copy,
-        \\        },
+        \\{
+        \\  "sync_patterns": [
+        \\    {
+        \\      "pattern": ".env",
+        \\      "mode": "symlink"
         \\    },
-        \\    .main_repo = "myrepo",
+        \\    {
+        \\      "pattern": ".env.local",
+        \\      "mode": "copy"
+        \\    }
+        \\  ],
+        \\  "main_repo": "myrepo",
+        \\  "sync_enabled": true
         \\}
     ;
 
@@ -88,19 +89,23 @@ test "parseConfig new format" {
     try std.testing.expectEqualStrings(".env.local", cfg.sync_patterns[1].pattern);
     try std.testing.expectEqual(shgit.config.SyncMode.copy, cfg.sync_patterns[1].mode);
     try std.testing.expectEqualStrings("myrepo", cfg.main_repo.?);
-    try std.testing.expectEqual(true, cfg.sync_enabled); // Default is true
+    try std.testing.expectEqual(true, cfg.sync_enabled);
 }
 
-test "parseConfig legacy format" {
+test "parseConfig with defaults" {
     const allocator = std.testing.allocator;
 
     const content =
-        \\.{
-        \\    .sync_patterns = .{
-        \\        ".env",
-        \\        ".env.local",
+        \\{
+        \\  "sync_patterns": [
+        \\    {
+        \\      "pattern": ".env"
         \\    },
-        \\    .main_repo = "myrepo",
+        \\    {
+        \\      "pattern": ".env.local"
+        \\    }
+        \\  ],
+        \\  "main_repo": "myrepo"
         \\}
     ;
 
@@ -113,12 +118,13 @@ test "parseConfig legacy format" {
     try std.testing.expectEqualStrings(".env.local", cfg.sync_patterns[1].pattern);
     try std.testing.expectEqual(shgit.config.SyncMode.symlink, cfg.sync_patterns[1].mode);
     try std.testing.expectEqualStrings("myrepo", cfg.main_repo.?);
+    try std.testing.expectEqual(true, cfg.sync_enabled); // Default is true
 }
 
 test "parseConfig empty" {
     const allocator = std.testing.allocator;
 
-    const content = ".{}";
+    const content = "{}";
 
     var cfg = try shgit.config.parseConfig(allocator, content);
     defer cfg.deinit(allocator);
@@ -132,12 +138,14 @@ test "parseConfig with sync_enabled true" {
     const allocator = std.testing.allocator;
 
     const content =
-        \\.{
-        \\    .main_repo = "myrepo",
-        \\    .sync_enabled = true,
-        \\    .sync_patterns = .{
-        \\        ".env",
-        \\    },
+        \\{
+        \\  "main_repo": "myrepo",
+        \\  "sync_enabled": true,
+        \\  "sync_patterns": [
+        \\    {
+        \\      "pattern": ".env"
+        \\    }
+        \\  ]
         \\}
     ;
 
@@ -152,12 +160,14 @@ test "parseConfig with sync_enabled false" {
     const allocator = std.testing.allocator;
 
     const content =
-        \\.{
-        \\    .main_repo = "myrepo",
-        \\    .sync_enabled = false,
-        \\    .sync_patterns = .{
-        \\        ".env",
-        \\    },
+        \\{
+        \\  "main_repo": "myrepo",
+        \\  "sync_enabled": false,
+        \\  "sync_patterns": [
+        \\    {
+        \\      "pattern": ".env"
+        \\    }
+        \\  ]
         \\}
     ;
 
@@ -262,21 +272,26 @@ test "config file creation and parsing" {
 
     // Create config file
     try tmp_dir.dir.makePath(".shgit");
-    const config_file = try tmp_dir.dir.createFile(".shgit/config.zon", .{});
+    const config_file = try tmp_dir.dir.createFile(".shgit/config.json", .{});
     defer config_file.close();
 
     try config_file.writeAll(
-        \\.{
-        \\    .main_repo = "myrepo",
-        \\    .sync_patterns = .{
-        \\        ".env",
-        \\        ".env.local",
+        \\{
+        \\  "main_repo": "myrepo",
+        \\  "sync_enabled": true,
+        \\  "sync_patterns": [
+        \\    {
+        \\      "pattern": ".env"
         \\    },
+        \\    {
+        \\      "pattern": ".env.local"
+        \\    }
+        \\  ]
         \\}
     );
 
     // Verify file exists
-    const stat = try tmp_dir.dir.statFile(".shgit/config.zon");
+    const stat = try tmp_dir.dir.statFile(".shgit/config.json");
     try std.testing.expect(stat.kind == .file);
 }
 

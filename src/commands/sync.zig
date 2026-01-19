@@ -23,7 +23,7 @@ pub fn execute(allocator: std.mem.Allocator, verbose: bool) !void {
     }
 
     if (cfg.sync_patterns.len == 0) {
-        log.info("no sync_patterns configured in .shgit/config.zon", .{});
+        log.info("no sync_patterns configured in .shgit/config.json", .{});
         return;
     }
 

@@ -143,11 +143,21 @@ Access parsed args:
 - Subcommands: Use `terminating_positional` option and enum parsing
 
 ## Configuration Files
-Config stored in `.shgit/config.zon`:
-```zig
-.{
-    .main_repo = "reponame",
-    .sync_patterns = .{ ".env", ".env.local" },
+Config stored in `.shgit/config.json`:
+```json
+{
+  "main_repo": "reponame",
+  "sync_enabled": true,
+  "sync_patterns": [
+    {
+      "pattern": ".env",
+      "mode": "symlink"
+    },
+    {
+      "pattern": ".env.local",
+      "mode": "copy"
+    }
+  ]
 }
 ```
 

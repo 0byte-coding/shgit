@@ -19,7 +19,7 @@ foorepo_shgit/
     .vscode/settings.json
     .opencode/opencode.json
   repo/                 # Git submodule (target repo)
-  .shgit/config.zon     # shgit configuration
+  .shgit/config.json    # shgit configuration
   .gitignore
   .gitmodules
 ```

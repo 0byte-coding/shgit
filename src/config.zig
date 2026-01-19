@@ -37,7 +37,7 @@ pub const Config = struct {
 };
 
 pub const SHGIT_DIR = ".shgit";
-pub const CONFIG_FILE = "config.zon";
+pub const CONFIG_FILE = "config.json";
 pub const LINK_DIR = "link";
 pub const REPO_DIR = "repo";
 
@@ -72,7 +72,7 @@ pub fn findShgitRoot(allocator: std.mem.Allocator) !?[]const u8 {
     }
 }
 
-/// Load config from .shgit/config.zon
+/// Load config from .shgit/config.json
 pub fn loadConfig(allocator: std.mem.Allocator, shgit_root: []const u8) !Config {
     const config_path = try std.fs.path.join(allocator, &.{ shgit_root, SHGIT_DIR, CONFIG_FILE });
     defer allocator.free(config_path);
@@ -93,108 +93,36 @@ pub fn loadConfig(allocator: std.mem.Allocator, shgit_root: []const u8) !Config 
 }
 
 pub fn parseConfig(allocator: std.mem.Allocator, content: []const u8) !Config {
-    // Simple ZON-like parsing for sync_patterns
-    var cfg = Config{};
-    var patterns: std.ArrayList(SyncPattern) = .empty;
-    errdefer {
-        for (patterns.items) |p| allocator.free(p.pattern);
-        patterns.deinit(allocator);
+    const parsed = try std.json.parseFromSlice(Config, allocator, content, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    // Deep copy the parsed config since parsed.deinit() will free it
+    var cfg = Config{
+        .sync_enabled = parsed.value.sync_enabled,
+    };
+
+    if (parsed.value.main_repo) |repo| {
+        cfg.main_repo = try allocator.dupe(u8, repo);
     }
 
-    var lines = std.mem.splitScalar(u8, content, '\n');
-    var in_sync_patterns = false;
-    var current_pattern: ?[]const u8 = null;
-    var current_mode: SyncMode = .symlink;
-    var in_pattern_block = false;
-
-    while (lines.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-
-        if (std.mem.startsWith(u8, trimmed, ".sync_patterns")) {
-            in_sync_patterns = true;
-            continue;
+    if (parsed.value.sync_patterns.len > 0) {
+        const patterns = try allocator.alloc(SyncPattern, parsed.value.sync_patterns.len);
+        for (parsed.value.sync_patterns, 0..) |sp, i| {
+            patterns[i] = .{
+                .pattern = try allocator.dupe(u8, sp.pattern),
+                .mode = sp.mode,
+            };
         }
-
-        if (in_sync_patterns) {
-            if (std.mem.startsWith(u8, trimmed, "},") or std.mem.eql(u8, trimmed, "}")) {
-                if (in_pattern_block) {
-                    // End of a pattern block
-                    if (current_pattern) |pat| {
-                        try patterns.append(allocator, .{ .pattern = pat, .mode = current_mode });
-                        current_pattern = null;
-                        current_mode = .symlink;
-                    }
-                    in_pattern_block = false;
-                } else {
-                    // End of sync_patterns section
-                    in_sync_patterns = false;
-                }
-                continue;
-            }
-
-            // Check for pattern block start: .{ or .{
-            if (std.mem.startsWith(u8, trimmed, ".{")) {
-                in_pattern_block = true;
-                current_mode = .symlink; // Default mode
-                continue;
-            }
-
-            // Parse .pattern = "value"
-            if (std.mem.startsWith(u8, trimmed, ".pattern")) {
-                const eq_pos = std.mem.indexOf(u8, trimmed, "=") orelse continue;
-                const rest = std.mem.trim(u8, trimmed[eq_pos + 1 ..], " \t,");
-                if (std.mem.startsWith(u8, rest, "\"")) {
-                    const end = std.mem.indexOfScalarPos(u8, rest, 1, '"') orelse continue;
-                    current_pattern = try allocator.dupe(u8, rest[1..end]);
-                }
-                continue;
-            }
-
-            // Parse .mode = .symlink or .mode = .copy
-            if (std.mem.startsWith(u8, trimmed, ".mode")) {
-                if (std.mem.indexOf(u8, trimmed, ".copy") != null) {
-                    current_mode = .copy;
-                } else {
-                    current_mode = .symlink;
-                }
-                continue;
-            }
-
-            // Legacy format: just a quoted string like "pattern",
-            if (std.mem.startsWith(u8, trimmed, "\"") and !in_pattern_block) {
-                const end = std.mem.indexOfScalarPos(u8, trimmed, 1, '"') orelse continue;
-                const pattern = try allocator.dupe(u8, trimmed[1..end]);
-                try patterns.append(allocator, .{ .pattern = pattern, .mode = .symlink });
-            }
-        }
-
-        if (std.mem.startsWith(u8, trimmed, ".main_repo")) {
-            // Parse .main_repo = "name",
-            const eq_pos = std.mem.indexOf(u8, trimmed, "=") orelse continue;
-            const rest = std.mem.trim(u8, trimmed[eq_pos + 1 ..], " \t");
-            if (std.mem.startsWith(u8, rest, "\"")) {
-                const end = std.mem.indexOfScalarPos(u8, rest, 1, '"') orelse continue;
-                cfg.main_repo = try allocator.dupe(u8, rest[1..end]);
-            }
-        }
-
-        if (std.mem.startsWith(u8, trimmed, ".sync_enabled")) {
-            // Parse .sync_enabled = true/false,
-            const eq_pos = std.mem.indexOf(u8, trimmed, "=") orelse continue;
-            const rest = std.mem.trim(u8, trimmed[eq_pos + 1 ..], " \t,");
-            if (std.mem.indexOf(u8, rest, "false") != null) {
-                cfg.sync_enabled = false;
-            } else if (std.mem.indexOf(u8, rest, "true") != null) {
-                cfg.sync_enabled = true;
-            }
-        }
+        cfg.sync_patterns = patterns;
     }
 
-    cfg.sync_patterns = try patterns.toOwnedSlice(allocator);
     return cfg;
 }
 
-/// Save config to .shgit/config.zon
+/// Save config to .shgit/config.json
 pub fn saveConfig(allocator: std.mem.Allocator, shgit_root: []const u8, cfg: Config) !void {
     const dir_path = try std.fs.path.join(allocator, &.{ shgit_root, SHGIT_DIR });
     defer allocator.free(dir_path);
@@ -212,23 +140,8 @@ pub fn saveConfig(allocator: std.mem.Allocator, shgit_root: []const u8, cfg: Con
     var buf: [4096]u8 = undefined;
     var file_writer = file.writer(&buf);
     const writer = &file_writer.interface;
-    try writer.writeAll(".{\n");
 
-    if (cfg.main_repo) |repo| {
-        try writer.print("    .main_repo = \"{s}\",\n", .{repo});
-    }
-
-    try writer.print("    .sync_enabled = {s},\n", .{if (cfg.sync_enabled) "true" else "false"});
-
-    try writer.writeAll("    .sync_patterns = .{\n");
-    for (cfg.sync_patterns) |sp| {
-        try writer.writeAll("        .{\n");
-        try writer.print("            .pattern = \"{s}\",\n", .{sp.pattern});
-        try writer.print("            .mode = .{s},\n", .{@tagName(sp.mode)});
-        try writer.writeAll("        },\n");
-    }
-    try writer.writeAll("    },\n");
-    try writer.writeAll("}\n");
+    try writer.print("{f}", .{std.json.fmt(cfg, .{ .whitespace = .indent_2 })});
     try writer.flush();
 
     log.info("saved config to {s}", .{config_path});
