@@ -33,3 +33,25 @@ mkdir -p link/.vscode
 echo '{}' > link/.vscode/settings.json
 shgit link
 ```
+## Installation
+
+### Distributions
+
+Currently only available on the arch linux aur
+
+```sh
+yay -S shgit-bin
+```
+
+### Manual user only install
+
+Ensure `~/.local/bin` is in your `PATH` before proceeding
+
+```bash
+tmp=$(mktemp -d) && \
+  curl -L https://github.com/0byte-coding/shgit/releases/latest/download/shgit-x86_64-linux-gnu.tar.gz | tar -xz -C "$tmp" --overwrite && \
+  mkdir -p ~/.local/bin && \
+  mv "$tmp/shgit" ~/.local/bin/ && \
+  chmod +x ~/.local/bin/shgit && \
+  rm -rf "$tmp"
+```
