@@ -5,7 +5,7 @@
 ## Commands
 
 - **`shgit clone <url>`** - Clone shgit repo + setup
-- **`shgit worktree add -b feat/branch wt-branch origin/dev`** - Create a worktree branch (also links stuff from `link/`) based on the remote "dev" branch
+- **`shgit worktree add -b feat/branch wt-branch dev`** - Create a worktree branch (also links stuff from `link/`) based on the local dev branch
 - **`shgit link`** - Link files from `link/` to `repo/*` folders
 - **`shgit worktree list`** - Show all worktrees
 - **`shgit worktree remove <name>`** - Delete worktree
