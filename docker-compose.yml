@@ -1,0 +1,15 @@
+services:
+  app:
+    container_name: shgit
+    build:
+      context: .
+      dockerfile: Dockerfile
+    stdin_open: true
+    tty: true
+    working_dir: /app
+    volumes:
+      - ./:/app
+    user: "1000:1000"
+    environment:
+      - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
+    command: /bin/bash
