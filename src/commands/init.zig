@@ -15,7 +15,7 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !void {
     }
 
     var cwd_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const n = try std.Io.Dir.cwd().realPath(io, &cwd_buf);
+    const n = try std.Io.Dir.cwd().realPathFile(io, ".", &cwd_buf);
     const cwd = cwd_buf[0..n];
 
     log.info("initializing shgit in {s}", .{cwd});

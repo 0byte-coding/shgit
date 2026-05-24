@@ -34,7 +34,7 @@ test "addLocalExclude with submodule" {
 
     // Get absolute path to repo
     var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const n = try tmp_dir.dir.realPath(tio, &buf);
+    const n = try tmp_dir.dir.realPathFile(tio, ".", &buf);
     const tmp_path = buf[0..n];
     const repo_path = try std.fs.path.join(allocator, &.{ tmp_path, "repo" });
 
@@ -258,7 +258,7 @@ test "shgit structure creation" {
     defer tmp_dir.cleanup();
 
     var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const n = try tmp_dir.dir.realPath(tio, &buf);
+    const n = try tmp_dir.dir.realPathFile(tio, ".", &buf);
     const tmp_path = buf[0..n];
     _ = tmp_path;
 
@@ -581,7 +581,7 @@ test "worktree add with -b and no commitish defaults to HEAD" {
     defer tmp_dir.cleanup();
 
     var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const n = try tmp_dir.dir.realPath(tio, &buf);
+    const n = try tmp_dir.dir.realPathFile(tio, ".", &buf);
     const tmp_path = buf[0..n];
 
     // Initialize a git repo

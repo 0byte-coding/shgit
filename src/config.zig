@@ -44,7 +44,7 @@ pub const REPO_DIR = "repo";
 /// Find the shgit root directory by looking for .shgit folder
 pub fn findShgitRoot(io: std.Io, allocator: std.mem.Allocator) !?[]const u8 {
     var cwd_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const n = std.Io.Dir.cwd().realPath(io, &cwd_buf) catch |err| {
+    const n = std.Io.Dir.cwd().realPathFile(io, ".", &cwd_buf) catch |err| {
         log.err("failed to get cwd: {}", .{err});
         return null;
     };
