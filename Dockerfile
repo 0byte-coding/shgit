@@ -10,11 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl unzip xz-utils ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Zig 0.15.02 to /opt/zig (matches nix devshell version)
-RUN curl -fsSL "https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz" \
+# Install Zig 0.16.0 to /opt/zig
+RUN curl -fsSL "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz" \
         -o /tmp/zig.tar.xz \
     && tar -xf /tmp/zig.tar.xz -C /opt \
-    && mv /opt/zig-x86_64-linux-0.15.2 /opt/zig \
+    && mv /opt/zig-x86_64-linux-0.16.0 /opt/zig \
     && rm /tmp/zig.tar.xz
 
 ENV PATH="/opt/zig:${PATH}"

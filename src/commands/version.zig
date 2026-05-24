@@ -3,22 +3,22 @@ const build_options = @import("build_options");
 
 const log = std.log.scoped(.version);
 
-pub fn execute(allocator: std.mem.Allocator, verbose: bool) !void {
+pub fn execute(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !void {
     _ = allocator;
     _ = verbose;
 
     // Get version from build.zig.zon
-    const version = try std.SemanticVersion.parse(build_options.version);
+    const ver = try std.SemanticVersion.parse(build_options.version);
 
-    var stdout_buf: [10 * build_options.version.len]u8 = undefined;
-    var stdout_buffered = std.fs.File.stdout().writer(&stdout_buf);
-    const stdout = &stdout_buffered.interface;
+    var buf: [10 * build_options.version.len]u8 = undefined;
+    var w = std.Io.File.stdout().writer(io, &buf);
+    const stdout = &w.interface;
 
-    try stdout.print("shgit v{}.{}.{}", .{ version.major, version.minor, version.patch });
-    if (version.pre) |pre| {
+    try stdout.print("shgit v{}.{}.{}", .{ ver.major, ver.minor, ver.patch });
+    if (ver.pre) |pre| {
         try stdout.print("-{s}", .{pre});
     }
-    if (version.build) |build| {
+    if (ver.build) |build| {
         try stdout.print("+{s}", .{build});
     }
     try stdout.print("\n", .{});

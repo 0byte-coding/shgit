@@ -2,8 +2,10 @@ const std = @import("std");
 const shgit = @import("shgit");
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }
+
+const tio = std.testing.io;
 
 // Tests moved from src/git.zig
 test "addLocalExclude with submodule" {
@@ -17,28 +19,31 @@ test "addLocalExclude with submodule" {
     defer tmp_dir.cleanup();
 
     // Create repo structure similar to submodule
-    try tmp_dir.dir.makePath("repo");
-    try tmp_dir.dir.makePath(".git/modules/repo/info");
+    try tmp_dir.dir.createDirPath(tio, "repo");
+    try tmp_dir.dir.createDirPath(tio, ".git/modules/repo/info");
 
     // Write .git file with relative gitdir (like submodules do)
-    const git_file = try tmp_dir.dir.createFile("repo/.git", .{});
-    defer git_file.close();
-    try git_file.writeAll("gitdir: ../.git/modules/repo\n");
+    const git_file = try tmp_dir.dir.createFile(tio, "repo/.git", .{});
+    defer git_file.close(tio);
+    try git_file.writeStreamingAll(tio, "gitdir: ../.git/modules/repo\n");
 
     // Create exclude file
-    const exclude_file = try tmp_dir.dir.createFile(".git/modules/repo/info/exclude", .{});
-    defer exclude_file.close();
-    try exclude_file.writeAll("# test exclude file\n");
+    const exclude_file = try tmp_dir.dir.createFile(tio, ".git/modules/repo/info/exclude", .{});
+    defer exclude_file.close(tio);
+    try exclude_file.writeStreamingAll(tio, "# test exclude file\n");
 
     // Get absolute path to repo
-    const tmp_path = try tmp_dir.dir.realpathAlloc(allocator, ".");
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const n = try tmp_dir.dir.realPath(tio, &buf);
+    const tmp_path = buf[0..n];
     const repo_path = try std.fs.path.join(allocator, &.{ tmp_path, "repo" });
 
     // Add a file to local exclude
-    try shgit.git.addLocalExclude(allocator, repo_path, ".env");
+    try shgit.git.addLocalExclude(tio, allocator, repo_path, ".env");
 
     // Read exclude file and verify it was added
-    const exclude_content = try tmp_dir.dir.readFileAlloc(allocator, ".git/modules/repo/info/exclude", 4096);
+    const exclude_content = try tmp_dir.dir.readFileAlloc(tio, ".git/modules/repo/info/exclude", allocator, .unlimited);
+    defer allocator.free(exclude_content);
     try testing.expect(std.mem.indexOf(u8, exclude_content, "/.env") != null);
 }
 
@@ -252,18 +257,22 @@ test "shgit structure creation" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const tmp_path = try tmp_dir.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(tmp_path);
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const n = try tmp_dir.dir.realPath(tio, &buf);
+    const tmp_path = buf[0..n];
+    _ = tmp_path;
 
     // Create shgit structure manually
-    try tmp_dir.dir.makePath(".shgit");
-    try tmp_dir.dir.makePath("link");
-    try tmp_dir.dir.makePath("repo");
+    try tmp_dir.dir.createDirPath(tio, ".shgit");
+    try tmp_dir.dir.createDirPath(tio, "link");
+    try tmp_dir.dir.createDirPath(tio, "repo");
 
     // Verify structure
     try std.testing.expect(try dirExists(tmp_dir.dir, ".shgit"));
     try std.testing.expect(try dirExists(tmp_dir.dir, "link"));
     try std.testing.expect(try dirExists(tmp_dir.dir, "repo"));
+
+    _ = allocator;
 }
 
 test "config file creation and parsing" {
@@ -271,11 +280,11 @@ test "config file creation and parsing" {
     defer tmp_dir.cleanup();
 
     // Create config file
-    try tmp_dir.dir.makePath(".shgit");
-    const config_file = try tmp_dir.dir.createFile(".shgit/config.json", .{});
-    defer config_file.close();
+    try tmp_dir.dir.createDirPath(tio, ".shgit");
+    const config_file = try tmp_dir.dir.createFile(tio, ".shgit/config.json", .{});
+    defer config_file.close(tio);
 
-    try config_file.writeAll(
+    try config_file.writeStreamingAll(tio,
         \\{
         \\  "main_repo": "myrepo",
         \\  "sync_enabled": true,
@@ -291,7 +300,7 @@ test "config file creation and parsing" {
     );
 
     // Verify file exists
-    const stat = try tmp_dir.dir.statFile(".shgit/config.json");
+    const stat = try tmp_dir.dir.statFile(tio, ".shgit/config.json", .{});
     try std.testing.expect(stat.kind == .file);
 }
 
@@ -302,38 +311,30 @@ test "symlink creation" {
     defer tmp_dir.cleanup();
 
     // Create source file
-    try tmp_dir.dir.makePath("link/.vscode");
-    const src_file = try tmp_dir.dir.createFile("link/.vscode/settings.json", .{});
-    try src_file.writeAll("{}");
-    src_file.close();
+    try tmp_dir.dir.createDirPath(tio, "link/.vscode");
+    const src_file = try tmp_dir.dir.createFile(tio, "link/.vscode/settings.json", .{});
+    try src_file.writeStreamingAll(tio, "{}");
+    src_file.close(tio);
 
     // Create target directory
-    try tmp_dir.dir.makePath("repo/myrepo/.vscode");
+    try tmp_dir.dir.createDirPath(tio, "repo/myrepo/.vscode");
 
     // Create symlink (relative path from repo/myrepo/.vscode to link/.vscode)
-    try tmp_dir.dir.symLink(
+    try tmp_dir.dir.symLink(tio,
         "../../../link/.vscode/settings.json",
         "repo/myrepo/.vscode/settings.json",
         .{},
     );
 
     // Verify symlink exists by checking stat
-    const stat = tmp_dir.dir.statFile("repo/myrepo/.vscode/settings.json") catch |err| {
-        // Symlinks might not be fully supported in all test environments
-        if (err == error.FileNotFound) {
-            // Skip test if symlink didn't work
-            return;
-        }
+    const stat = tmp_dir.dir.statFile(tio, "repo/myrepo/.vscode/settings.json", .{}) catch |err| {
+        if (err == error.FileNotFound) return;
         return err;
     };
     _ = stat;
 
     // Read through symlink
-    const content = try tmp_dir.dir.readFileAlloc(
-        allocator,
-        "repo/myrepo/.vscode/settings.json",
-        1024,
-    );
+    const content = try tmp_dir.dir.readFileAlloc(tio, "repo/myrepo/.vscode/settings.json", allocator, .unlimited);
     defer allocator.free(content);
 
     try std.testing.expectEqualStrings("{}", content);
@@ -344,15 +345,15 @@ test "local gitignore exclude file" {
     defer tmp_dir.cleanup();
 
     // Create .git/info structure
-    try tmp_dir.dir.makePath(".git/info");
+    try tmp_dir.dir.createDirPath(tio, ".git/info");
 
     // Create exclude file
-    const exclude_file = try tmp_dir.dir.createFile(".git/info/exclude", .{});
-    try exclude_file.writeAll("# Local excludes\n");
-    exclude_file.close();
+    const exclude_file = try tmp_dir.dir.createFile(tio, ".git/info/exclude", .{});
+    try exclude_file.writeStreamingAll(tio, "# Local excludes\n");
+    exclude_file.close(tio);
 
     // Verify
-    const stat = try tmp_dir.dir.statFile(".git/info/exclude");
+    const stat = try tmp_dir.dir.statFile(tio, ".git/info/exclude", .{});
     try std.testing.expect(stat.kind == .file);
 }
 
@@ -424,8 +425,8 @@ fn relativePath(allocator: std.mem.Allocator, from: []const u8, to: []const u8) 
     return result.toOwnedSlice(allocator);
 }
 
-fn dirExists(dir: std.fs.Dir, path: []const u8) !bool {
-    const stat = dir.statFile(path) catch |err| {
+fn dirExists(dir: std.Io.Dir, path: []const u8) !bool {
+    const stat = dir.statFile(tio, path, .{}) catch |err| {
         if (err == error.FileNotFound) return false;
         return err;
     };
@@ -434,35 +435,30 @@ fn dirExists(dir: std.fs.Dir, path: []const u8) !bool {
 
 // Tests for unlink command
 test "unlink removes symlink" {
-    _ = std.testing.allocator;
-
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
     // Create source file in link/
-    try tmp_dir.dir.makePath("link");
-    const src_file = try tmp_dir.dir.createFile("link/.env", .{});
-    try src_file.writeAll("TEST=value");
-    src_file.close();
+    try tmp_dir.dir.createDirPath(tio, "link");
+    const src_file = try tmp_dir.dir.createFile(tio, "link/.env", .{});
+    try src_file.writeStreamingAll(tio, "TEST=value");
+    src_file.close(tio);
 
     // Create target directory and symlink
-    try tmp_dir.dir.makePath("repo/myrepo");
-    try tmp_dir.dir.symLink("../../link/.env", "repo/myrepo/.env", .{});
+    try tmp_dir.dir.createDirPath(tio, "repo/myrepo");
+    try tmp_dir.dir.symLink(tio, "../../link/.env", "repo/myrepo/.env", .{});
 
     // Verify symlink exists
-    _ = tmp_dir.dir.statFile("repo/myrepo/.env") catch |err| {
-        if (err == error.FileNotFound) {
-            // Symlinks not supported in test environment
-            return;
-        }
+    _ = tmp_dir.dir.statFile(tio, "repo/myrepo/.env", .{}) catch |err| {
+        if (err == error.FileNotFound) return;
         return err;
     };
 
     // Delete the symlink
-    try tmp_dir.dir.deleteFile("repo/myrepo/.env");
+    try tmp_dir.dir.deleteFile(tio, "repo/myrepo/.env");
 
     // Verify it's gone
-    const result = tmp_dir.dir.statFile("repo/myrepo/.env");
+    const result = tmp_dir.dir.statFile(tio, "repo/myrepo/.env", .{});
     try std.testing.expectError(error.FileNotFound, result);
 }
 
@@ -470,10 +466,10 @@ test "unlink handles non-existent file" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    try tmp_dir.dir.makePath("repo/myrepo");
+    try tmp_dir.dir.createDirPath(tio, "repo/myrepo");
 
     // Try to delete non-existent file - should not error
-    tmp_dir.dir.deleteFile("repo/myrepo/.env") catch |err| {
+    tmp_dir.dir.deleteFile(tio, "repo/myrepo/.env") catch |err| {
         try std.testing.expectEqual(error.FileNotFound, err);
     };
 }
@@ -485,13 +481,13 @@ test "unlink removes from exclude file" {
     defer tmp_dir.cleanup();
 
     // Create .git/info structure with exclude file
-    try tmp_dir.dir.makePath(".git/info");
-    const exclude_file = try tmp_dir.dir.createFile(".git/info/exclude", .{});
-    try exclude_file.writeAll("# Exclude file\n/.env\n/.env.local\n");
-    exclude_file.close();
+    try tmp_dir.dir.createDirPath(tio, ".git/info");
+    const exclude_file = try tmp_dir.dir.createFile(tio, ".git/info/exclude", .{});
+    try exclude_file.writeStreamingAll(tio, "# Exclude file\n/.env\n/.env.local\n");
+    exclude_file.close(tio);
 
     // Read original content
-    const original = try tmp_dir.dir.readFileAlloc(allocator, ".git/info/exclude", 4096);
+    const original = try tmp_dir.dir.readFileAlloc(tio, ".git/info/exclude", allocator, .unlimited);
     defer allocator.free(original);
     try std.testing.expect(std.mem.indexOf(u8, original, "/.env") != null);
 
@@ -509,12 +505,12 @@ test "unlink removes from exclude file" {
     }
 
     // Write back
-    const out_file = try tmp_dir.dir.createFile(".git/info/exclude", .{ .truncate = true });
-    try out_file.writeAll(new_content.items);
-    out_file.close();
+    const out_file = try tmp_dir.dir.createFile(tio, ".git/info/exclude", .{ .truncate = true });
+    try out_file.writeStreamingAll(tio, new_content.items);
+    out_file.close(tio);
 
     // Verify
-    const modified = try tmp_dir.dir.readFileAlloc(allocator, ".git/info/exclude", 4096);
+    const modified = try tmp_dir.dir.readFileAlloc(tio, ".git/info/exclude", allocator, .unlimited);
     defer allocator.free(modified);
     try std.testing.expect(std.mem.indexOf(u8, modified, "/.env\n") == null);
     try std.testing.expect(std.mem.indexOf(u8, modified, "/.env.local") != null);
@@ -525,30 +521,30 @@ test "unlink handles multiple repos" {
     defer tmp_dir.cleanup();
 
     // Create multiple repo directories
-    try tmp_dir.dir.makePath("repo/main");
-    try tmp_dir.dir.makePath("repo/worktree1");
-    try tmp_dir.dir.makePath("repo/worktree2");
-    try tmp_dir.dir.makePath("link");
+    try tmp_dir.dir.createDirPath(tio, "repo/main");
+    try tmp_dir.dir.createDirPath(tio, "repo/worktree1");
+    try tmp_dir.dir.createDirPath(tio, "repo/worktree2");
+    try tmp_dir.dir.createDirPath(tio, "link");
 
     // Create source file
-    const src_file = try tmp_dir.dir.createFile("link/.env", .{});
-    try src_file.writeAll("TEST=value");
-    src_file.close();
+    const src_file = try tmp_dir.dir.createFile(tio, "link/.env", .{});
+    try src_file.writeStreamingAll(tio, "TEST=value");
+    src_file.close(tio);
 
     // Create symlinks in all repos
-    tmp_dir.dir.symLink("../../link/.env", "repo/main/.env", .{}) catch {};
-    tmp_dir.dir.symLink("../../link/.env", "repo/worktree1/.env", .{}) catch {};
-    tmp_dir.dir.symLink("../../link/.env", "repo/worktree2/.env", .{}) catch {};
+    tmp_dir.dir.symLink(tio, "../../link/.env", "repo/main/.env", .{}) catch {};
+    tmp_dir.dir.symLink(tio, "../../link/.env", "repo/worktree1/.env", .{}) catch {};
+    tmp_dir.dir.symLink(tio, "../../link/.env", "repo/worktree2/.env", .{}) catch {};
 
     // Delete all symlinks
-    tmp_dir.dir.deleteFile("repo/main/.env") catch {};
-    tmp_dir.dir.deleteFile("repo/worktree1/.env") catch {};
-    tmp_dir.dir.deleteFile("repo/worktree2/.env") catch {};
+    tmp_dir.dir.deleteFile(tio, "repo/main/.env") catch {};
+    tmp_dir.dir.deleteFile(tio, "repo/worktree1/.env") catch {};
+    tmp_dir.dir.deleteFile(tio, "repo/worktree2/.env") catch {};
 
     // Verify all are gone
-    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile("repo/main/.env"));
-    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile("repo/worktree1/.env"));
-    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile("repo/worktree2/.env"));
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile(tio, "repo/main/.env", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile(tio, "repo/worktree1/.env", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile(tio, "repo/worktree2/.env", .{}));
 }
 
 test "unlink handles nested paths" {
@@ -556,22 +552,22 @@ test "unlink handles nested paths" {
     defer tmp_dir.cleanup();
 
     // Create nested structure
-    try tmp_dir.dir.makePath("repo/myrepo/packages/api");
-    try tmp_dir.dir.makePath("link/packages/api");
+    try tmp_dir.dir.createDirPath(tio, "repo/myrepo/packages/api");
+    try tmp_dir.dir.createDirPath(tio, "link/packages/api");
 
     // Create source file
-    const src_file = try tmp_dir.dir.createFile("link/packages/api/.env", .{});
-    try src_file.writeAll("API_KEY=secret");
-    src_file.close();
+    const src_file = try tmp_dir.dir.createFile(tio, "link/packages/api/.env", .{});
+    try src_file.writeStreamingAll(tio, "API_KEY=secret");
+    src_file.close(tio);
 
     // Create symlink
-    tmp_dir.dir.symLink("../../../../link/packages/api/.env", "repo/myrepo/packages/api/.env", .{}) catch {};
+    tmp_dir.dir.symLink(tio, "../../../../link/packages/api/.env", "repo/myrepo/packages/api/.env", .{}) catch {};
 
     // Delete symlink
-    tmp_dir.dir.deleteFile("repo/myrepo/packages/api/.env") catch {};
+    tmp_dir.dir.deleteFile(tio, "repo/myrepo/packages/api/.env") catch {};
 
     // Verify it's gone
-    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile("repo/myrepo/packages/api/.env"));
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile(tio, "repo/myrepo/packages/api/.env", .{}));
 }
 
 test "worktree add with -b and no commitish defaults to HEAD" {
@@ -584,65 +580,83 @@ test "worktree add with -b and no commitish defaults to HEAD" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const tmp_path = try tmp_dir.dir.realpathAlloc(test_allocator, ".");
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const n = try tmp_dir.dir.realPath(tio, &buf);
+    const tmp_path = buf[0..n];
 
     // Initialize a git repo
-    const init_result = std.process.Child.run(.{
-        .allocator = test_allocator,
+    const init_result = std.process.run(test_allocator, tio, .{
         .argv = &.{ "git", "init", "-b", "main" },
-        .cwd = tmp_path,
+        .cwd = .{ .path = tmp_path },
     }) catch |err| {
         std.debug.print("git init failed: {}\n", .{err});
         return; // Skip if git not available
     };
-    if (init_result.term.Exited != 0) {
-        std.debug.print("git init exited with code {}\n", .{init_result.term.Exited});
+    defer test_allocator.free(init_result.stdout);
+    defer test_allocator.free(init_result.stderr);
+    if (init_result.term.exited != 0) {
+        std.debug.print("git init exited with code {}\n", .{init_result.term.exited});
         return; // Skip if git fails
     }
 
+    // Configure git identity for the test repo
+    _ = std.process.run(test_allocator, tio, .{
+        .argv = &.{ "git", "config", "user.email", "test@test.com" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return;
+    _ = std.process.run(test_allocator, tio, .{
+        .argv = &.{ "git", "config", "user.name", "Test" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return;
+
     // Create a test file and commit it
-    const test_file = try tmp_dir.dir.createFile("test.txt", .{});
-    try test_file.writeAll("test content");
-    test_file.close();
+    const test_file = try tmp_dir.dir.createFile(tio, "test.txt", .{});
+    try test_file.writeStreamingAll(tio, "test content");
+    test_file.close(tio);
 
-    _ = std.process.Child.run(.{
-        .allocator = test_allocator,
+    const add_result = std.process.run(test_allocator, tio, .{
         .argv = &.{ "git", "add", "test.txt" },
-        .cwd = tmp_path,
+        .cwd = .{ .path = tmp_path },
     }) catch return;
+    defer test_allocator.free(add_result.stdout);
+    defer test_allocator.free(add_result.stderr);
 
-    _ = std.process.Child.run(.{
-        .allocator = test_allocator,
+    const commit_result = std.process.run(test_allocator, tio, .{
         .argv = &.{ "git", "commit", "-m", "Initial commit" },
-        .cwd = tmp_path,
+        .cwd = .{ .path = tmp_path },
     }) catch return;
+    defer test_allocator.free(commit_result.stdout);
+    defer test_allocator.free(commit_result.stderr);
+    if (commit_result.term.exited != 0) return; // Skip if commit fails (e.g. no git config)
 
     // Test: Create worktree with -b and no commitish (should default to HEAD)
-    const result = std.process.Child.run(.{
-        .allocator = test_allocator,
+    const result = std.process.run(test_allocator, tio, .{
         .argv = &.{ "git", "worktree", "add", "-b", "new-branch", "test-worktree" },
-        .cwd = tmp_path,
+        .cwd = .{ .path = tmp_path },
     }) catch |err| {
         std.debug.print("git worktree add failed: {}\n", .{err});
         return error.SkipZigTest;
     };
+    defer test_allocator.free(result.stdout);
+    defer test_allocator.free(result.stderr);
 
     // Should succeed without error
-    try std.testing.expectEqual(@as(u8, 0), result.term.Exited);
+    try std.testing.expectEqual(@as(u8, 0), result.term.exited);
 
     // Verify the worktree was created
-    const worktree_stat = tmp_dir.dir.statFile("test-worktree") catch |err| {
+    const worktree_stat = tmp_dir.dir.statFile(tio, "test-worktree", .{}) catch |err| {
         std.debug.print("worktree not found: {}\n", .{err});
         return error.TestFailed;
     };
     try std.testing.expect(worktree_stat.kind == .directory);
 
     // Verify the branch was created
-    const branch_result = std.process.Child.run(.{
-        .allocator = test_allocator,
+    const branch_result = std.process.run(test_allocator, tio, .{
         .argv = &.{ "git", "branch", "--list", "new-branch" },
-        .cwd = tmp_path,
+        .cwd = .{ .path = tmp_path },
     }) catch return;
+    defer test_allocator.free(branch_result.stdout);
+    defer test_allocator.free(branch_result.stderr);
 
     try std.testing.expect(std.mem.indexOf(u8, branch_result.stdout, "new-branch") != null);
 }

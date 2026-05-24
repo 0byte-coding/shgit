@@ -2,7 +2,6 @@ const std = @import("std");
 const asset = @import("asset");
 const config = @import("../config.zig");
 const git = @import("../git.zig");
-const fs_utils = @import("../fs_utils.zig");
 
 const log = std.log.scoped(.clone);
 
@@ -11,7 +10,7 @@ pub const CloneArgs = struct {
     name: ?[]const u8 = null,
 };
 
-pub fn execute(allocator: std.mem.Allocator, args: CloneArgs, verbose: bool) !void {
+pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: CloneArgs, verbose: bool) !void {
     const url = args.url;
     const custom_name = args.name;
 
@@ -32,33 +31,33 @@ pub fn execute(allocator: std.mem.Allocator, args: CloneArgs, verbose: bool) !vo
     log.info("creating {s}/", .{shgit_folder});
 
     // Check if folder exists
-    if (std.fs.cwd().statFile(shgit_folder)) |_| {
+    if (std.Io.Dir.cwd().statFile(io, shgit_folder, .{})) |_| {
         log.err("folder {s} already exists", .{shgit_folder});
         return error.FolderExists;
     } else |_| {}
 
     // Create folder structure
-    try std.fs.cwd().makePath(shgit_folder);
+    try std.Io.Dir.cwd().createDirPath(io, shgit_folder);
 
     // Initialize git repo
-    try git.init(allocator, shgit_folder);
+    try git.init(io, allocator, shgit_folder);
 
     // Create structure
-    try config.initShgitStructure(allocator, shgit_folder);
+    try config.initShgitStructure(io, allocator, shgit_folder);
 
     // Add submodule
     const repo_path = try std.fs.path.join(allocator, &.{ config.REPO_DIR, repo_name });
     defer allocator.free(repo_path);
 
-    try git.addSubmodule(allocator, shgit_folder, url, repo_path);
+    try git.addSubmodule(io, allocator, shgit_folder, url, repo_path);
 
     // Create .gitignore for the shgit folder
     const gitignore_path = try std.fs.path.join(allocator, &.{ shgit_folder, ".gitignore" });
     defer allocator.free(gitignore_path);
 
-    const gitignore_file = try std.fs.cwd().createFile(gitignore_path, .{});
-    defer gitignore_file.close();
-    try gitignore_file.writeAll(
+    const gitignore_file = try std.Io.Dir.cwd().createFile(io, gitignore_path, .{});
+    defer gitignore_file.close(io);
+    try gitignore_file.writeStreamingAll(io,
         \\# Ignore build artifacts in submodules
         \\repo/**/node_modules/
         \\repo/**/target/
@@ -74,15 +73,15 @@ pub fn execute(allocator: std.mem.Allocator, args: CloneArgs, verbose: bool) !vo
         },
         .main_repo = repo_name,
     };
-    try config.saveConfig(allocator, shgit_folder, cfg);
+    try config.saveConfig(io, allocator, shgit_folder, cfg);
 
     // Create AGENTS.md with embedded prompt content
     const agents_md_path = try std.fs.path.join(allocator, &.{ shgit_folder, "AGENTS.md" });
     defer allocator.free(agents_md_path);
 
-    const agents_file = try std.fs.cwd().createFile(agents_md_path, .{});
-    defer agents_file.close();
-    try agents_file.writeAll(asset.prompt_md);
+    const agents_file = try std.Io.Dir.cwd().createFile(io, agents_md_path, .{});
+    defer agents_file.close(io);
+    try agents_file.writeStreamingAll(io, asset.prompt_md);
 
     log.info("shgit project created at {s}/", .{shgit_folder});
     log.info("next: cd {s} && shgit link", .{shgit_folder});

@@ -2,7 +2,6 @@ const std = @import("std");
 const config = @import("../config.zig");
 const git = @import("../git.zig");
 const fs_utils = @import("../fs_utils.zig");
-const link_cmd = @import("link.zig");
 
 const log = std.log.scoped(.worktree);
 
@@ -16,27 +15,24 @@ pub const WorktreeRemoveArgs = struct {
     name: []const u8,
 };
 
-pub fn executeAdd(allocator: std.mem.Allocator, args: WorktreeAddArgs, verbose: bool) !void {
+pub fn executeAdd(io: std.Io, allocator: std.mem.Allocator, args: WorktreeAddArgs, verbose: bool) !void {
     _ = verbose;
 
     const name = args.name;
     const commitish = args.commitish;
     const new_branch = args.new_branch;
 
-    // Determine branch and start point based on -b flag
-    // If -b is provided: commitish is the start point, new_branch is the branch name
-    // If -b is not provided: commitish is the branch to checkout
     const branch: []const u8 = if (new_branch) |nb| nb else commitish;
     const create_branch = new_branch != null;
     const start_point = if (new_branch != null) commitish else null;
 
-    const shgit_root = try config.findShgitRoot(allocator) orelse {
+    const shgit_root = try config.findShgitRoot(io, allocator) orelse {
         log.err("not in a shgit project", .{});
         return error.NotShgitProject;
     };
     defer allocator.free(shgit_root);
 
-    var cfg = try config.loadConfig(allocator, shgit_root);
+    var cfg = try config.loadConfig(io, allocator, shgit_root);
     defer cfg.deinit(allocator);
 
     const main_repo = cfg.main_repo orelse {
@@ -50,35 +46,32 @@ pub fn executeAdd(allocator: std.mem.Allocator, args: WorktreeAddArgs, verbose: 
     const worktree_path = try std.fs.path.join(allocator, &.{ shgit_root, config.REPO_DIR, name });
     defer allocator.free(worktree_path);
 
-    // Create git worktree
-    try git.addWorktree(allocator, main_repo_path, worktree_path, branch, create_branch, start_point);
+    try git.addWorktree(io, allocator, main_repo_path, worktree_path, branch, create_branch, start_point);
 
-    // Link files from link/ to new worktree
     const link_dir = try std.fs.path.join(allocator, &.{ shgit_root, config.LINK_DIR });
     defer allocator.free(link_dir);
 
-    try linkToWorktree(allocator, link_dir, worktree_path, "");
+    try linkToWorktree(io, allocator, link_dir, worktree_path, "");
 
-    // Sync env files if configured and enabled
     if (cfg.sync_enabled) {
-        try syncEnvFiles(allocator, cfg, main_repo_path, worktree_path);
+        try syncEnvFiles(io, allocator, cfg, main_repo_path, worktree_path);
     }
 
     log.info("worktree created at repo/{s}/", .{name});
 }
 
-pub fn executeRemove(allocator: std.mem.Allocator, args: WorktreeRemoveArgs, verbose: bool) !void {
+pub fn executeRemove(io: std.Io, allocator: std.mem.Allocator, args: WorktreeRemoveArgs, verbose: bool) !void {
     _ = verbose;
 
     const name = args.name;
 
-    const shgit_root = try config.findShgitRoot(allocator) orelse {
+    const shgit_root = try config.findShgitRoot(io, allocator) orelse {
         log.err("not in a shgit project", .{});
         return error.NotShgitProject;
     };
     defer allocator.free(shgit_root);
 
-    var cfg = try config.loadConfig(allocator, shgit_root);
+    var cfg = try config.loadConfig(io, allocator, shgit_root);
     defer cfg.deinit(allocator);
 
     const main_repo = cfg.main_repo orelse {
@@ -97,20 +90,20 @@ pub fn executeRemove(allocator: std.mem.Allocator, args: WorktreeRemoveArgs, ver
     const worktree_path = try std.fs.path.join(allocator, &.{ shgit_root, config.REPO_DIR, name });
     defer allocator.free(worktree_path);
 
-    try git.removeWorktree(allocator, main_repo_path, worktree_path);
+    try git.removeWorktree(io, allocator, main_repo_path, worktree_path);
 
     log.info("removed worktree '{s}'", .{name});
 }
 
-pub fn executeList(allocator: std.mem.Allocator, verbose: bool) !void {
+pub fn executeList(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !void {
     _ = verbose;
-    const shgit_root = try config.findShgitRoot(allocator) orelse {
+    const shgit_root = try config.findShgitRoot(io, allocator) orelse {
         log.err("not in a shgit project", .{});
         return error.NotShgitProject;
     };
     defer allocator.free(shgit_root);
 
-    var cfg = try config.loadConfig(allocator, shgit_root);
+    var cfg = try config.loadConfig(io, allocator, shgit_root);
     defer cfg.deinit(allocator);
 
     const main_repo = cfg.main_repo orelse {
@@ -121,10 +114,11 @@ pub fn executeList(allocator: std.mem.Allocator, verbose: bool) !void {
     const main_repo_path = try std.fs.path.join(allocator, &.{ shgit_root, config.REPO_DIR, main_repo });
     defer allocator.free(main_repo_path);
 
-    try git.listWorktrees(allocator, main_repo_path);
+    try git.listWorktrees(io, allocator, main_repo_path);
 }
 
 fn linkToWorktree(
+    io: std.Io,
     allocator: std.mem.Allocator,
     link_base: []const u8,
     worktree_base: []const u8,
@@ -136,14 +130,14 @@ fn linkToWorktree(
         try allocator.dupe(u8, link_base);
     defer allocator.free(link_path);
 
-    var dir = std.fs.cwd().openDir(link_path, .{ .iterate = true }) catch |err| {
+    var dir = std.Io.Dir.cwd().openDir(io, link_path, .{ .iterate = true }) catch |err| {
         if (err == error.FileNotFound) return;
         return err;
     };
-    defer dir.close();
+    defer dir.close(io);
 
     var iter = dir.iterate();
-    while (try iter.next()) |entry| {
+    while (try iter.next(io)) |entry| {
         const new_rel = if (rel_path.len > 0)
             try std.fs.path.join(allocator, &.{ rel_path, entry.name })
         else
@@ -153,10 +147,10 @@ fn linkToWorktree(
         if (entry.kind == .directory) {
             const target_subdir = try std.fs.path.join(allocator, &.{ worktree_base, new_rel });
             defer allocator.free(target_subdir);
-            std.fs.cwd().makePath(target_subdir) catch |err| {
+            std.Io.Dir.cwd().createDirPath(io, target_subdir) catch |err| {
                 if (err != error.PathAlreadyExists) return err;
             };
-            try linkToWorktree(allocator, link_base, worktree_base, new_rel);
+            try linkToWorktree(io, allocator, link_base, worktree_base, new_rel);
         } else {
             const link_file = try std.fs.path.join(allocator, &.{ link_base, new_rel });
             defer allocator.free(link_file);
@@ -167,9 +161,9 @@ fn linkToWorktree(
             const rel_link = try fs_utils.relativePath(allocator, target_file, link_file);
             defer allocator.free(rel_link);
 
-            std.fs.cwd().deleteFile(target_file) catch {};
-            try std.fs.cwd().symLink(rel_link, target_file, .{});
-            try git.addLocalExclude(allocator, worktree_base, new_rel);
+            std.Io.Dir.cwd().deleteFile(io, target_file) catch {};
+            try std.Io.Dir.cwd().symLink(io, rel_link, target_file, .{});
+            try git.addLocalExclude(io, allocator, worktree_base, new_rel);
 
             log.info("linked: {s}", .{new_rel});
         }
@@ -177,28 +171,30 @@ fn linkToWorktree(
 }
 
 fn syncEnvFiles(
+    io: std.Io,
     allocator: std.mem.Allocator,
     cfg: config.Config,
     main_repo_path: []const u8,
     worktree_path: []const u8,
 ) !void {
     for (cfg.sync_patterns) |sp| {
-        try syncPattern(allocator, main_repo_path, worktree_path, sp.pattern, sp.mode);
+        try syncPattern(io, allocator, main_repo_path, worktree_path, sp.pattern, sp.mode);
     }
 }
 
 fn syncPattern(
+    io: std.Io,
     allocator: std.mem.Allocator,
     main_repo_path: []const u8,
     worktree_path: []const u8,
     pattern: []const u8,
     mode: config.SyncMode,
 ) !void {
-    // Simple pattern matching - walk main repo and find matches
-    try walkAndSync(allocator, main_repo_path, worktree_path, "", pattern, mode);
+    try walkAndSync(io, allocator, main_repo_path, worktree_path, "", pattern, mode);
 }
 
 fn walkAndSync(
+    io: std.Io,
     allocator: std.mem.Allocator,
     main_base: []const u8,
     worktree_base: []const u8,
@@ -212,15 +208,14 @@ fn walkAndSync(
         try allocator.dupe(u8, main_base);
     defer allocator.free(main_path);
 
-    var dir = std.fs.cwd().openDir(main_path, .{ .iterate = true }) catch |err| {
+    var dir = std.Io.Dir.cwd().openDir(io, main_path, .{ .iterate = true }) catch |err| {
         if (err == error.FileNotFound or err == error.NotDir) return;
         return err;
     };
-    defer dir.close();
+    defer dir.close(io);
 
     var iter = dir.iterate();
-    while (try iter.next()) |entry| {
-        // Skip .git
+    while (try iter.next(io)) |entry| {
         if (std.mem.eql(u8, entry.name, ".git")) continue;
 
         const new_rel = if (rel_path.len > 0)
@@ -230,9 +225,8 @@ fn walkAndSync(
         defer allocator.free(new_rel);
 
         if (entry.kind == .directory) {
-            try walkAndSync(allocator, main_base, worktree_base, new_rel, pattern, mode);
+            try walkAndSync(io, allocator, main_base, worktree_base, new_rel, pattern, mode);
         } else {
-            // Check if matches pattern
             if (matchesPattern(new_rel, pattern) or matchesPattern(entry.name, pattern)) {
                 const src = try std.fs.path.join(allocator, &.{ main_base, new_rel });
                 defer allocator.free(src);
@@ -240,26 +234,25 @@ fn walkAndSync(
                 const dst = try std.fs.path.join(allocator, &.{ worktree_base, new_rel });
                 defer allocator.free(dst);
 
-                // Ensure parent dir exists
                 if (std.fs.path.dirname(dst)) |parent| {
-                    std.fs.cwd().makePath(parent) catch {};
+                    std.Io.Dir.cwd().createDirPath(io, parent) catch {};
                 }
 
-                std.fs.cwd().deleteFile(dst) catch {};
+                std.Io.Dir.cwd().deleteFile(io, dst) catch {};
 
                 switch (mode) {
                     .symlink => {
                         const rel_link = try fs_utils.relativePath(allocator, dst, src);
                         defer allocator.free(rel_link);
 
-                        std.fs.cwd().symLink(rel_link, dst, .{}) catch |err| {
+                        std.Io.Dir.cwd().symLink(io, rel_link, dst, .{}) catch |err| {
                             log.warn("could not symlink {s}: {}", .{ new_rel, err });
                             continue;
                         };
                         log.info("symlinked: {s}", .{new_rel});
                     },
                     .copy => {
-                        std.fs.cwd().copyFile(src, std.fs.cwd(), dst, .{}) catch |err| {
+                        std.Io.Dir.copyFile(.cwd(), src, .cwd(), dst, io, .{}) catch |err| {
                             log.warn("could not copy {s}: {}", .{ new_rel, err });
                             continue;
                         };
@@ -267,8 +260,7 @@ fn walkAndSync(
                     },
                 }
 
-                // Add to local git exclude so it's not tracked
-                git.addLocalExclude(allocator, worktree_base, new_rel) catch |err| {
+                git.addLocalExclude(io, allocator, worktree_base, new_rel) catch |err| {
                     log.warn("could not add {s} to local exclude: {}", .{ new_rel, err });
                 };
             }
@@ -277,19 +269,9 @@ fn walkAndSync(
 }
 
 fn matchesPattern(path: []const u8, pattern: []const u8) bool {
-    // Simple pattern matching:
-    // - Exact match
-    // - Pattern matches filename
-    // - Pattern matches end of path
-
     if (std.mem.eql(u8, path, pattern)) return true;
-
-    // Get filename from path
     const filename = std.fs.path.basename(path);
     if (std.mem.eql(u8, filename, pattern)) return true;
-
-    // Check if path ends with pattern (for paths like "src/folder/file")
     if (std.mem.endsWith(u8, path, pattern)) return true;
-
     return false;
 }

@@ -3,35 +3,37 @@ const std = @import("std");
 const log = std.log.scoped(.git);
 
 /// Run a git command and return success/failure
-fn runGit(allocator: std.mem.Allocator, cwd: ?[]const u8, args: []const []const u8) !void {
+fn runGit(io: std.Io, allocator: std.mem.Allocator, cwd: ?[]const u8, args: []const []const u8) !void {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
 
     try argv.append(allocator, "git");
     try argv.appendSlice(allocator, args);
 
-    var child = std.process.Child.init(argv.items, allocator);
-    child.cwd = cwd;
-    child.stderr_behavior = .Inherit;
-    child.stdout_behavior = .Inherit;
-
-    _ = try child.spawnAndWait();
+    var child = try std.process.spawn(io, .{
+        .argv = argv.items,
+        .cwd = if (cwd) |p| .{ .path = p } else .inherit,
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    });
+    _ = try child.wait(io);
 }
 
 /// Initialize a git repository
-pub fn init(allocator: std.mem.Allocator, path: []const u8) !void {
+pub fn init(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
     log.info("git init {s}", .{path});
-    try runGit(allocator, path, &.{ "init", "-b", "main" });
+    try runGit(io, allocator, path, &.{ "init", "-b", "main" });
 }
 
 /// Add a git submodule
-pub fn addSubmodule(allocator: std.mem.Allocator, cwd: []const u8, url: []const u8, path: []const u8) !void {
+pub fn addSubmodule(io: std.Io, allocator: std.mem.Allocator, cwd: []const u8, url: []const u8, path: []const u8) !void {
     log.info("adding submodule {s} at {s}", .{ url, path });
-    try runGit(allocator, cwd, &.{ "submodule", "add", url, path });
+    try runGit(io, allocator, cwd, &.{ "submodule", "add", url, path });
 }
 
 /// Add a git worktree (simple wrapper)
-pub fn addWorktree(allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8, branch: []const u8, create_branch: bool, start_point: ?[]const u8) !void {
+pub fn addWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8, branch: []const u8, create_branch: bool, start_point: ?[]const u8) !void {
     var args: std.ArrayList([]const u8) = .empty;
     defer args.deinit(allocator);
 
@@ -58,22 +60,22 @@ pub fn addWorktree(allocator: std.mem.Allocator, repo_path: []const u8, worktree
         try args.append(allocator, sp);
     }
 
-    try runGit(allocator, repo_path, args.items);
+    try runGit(io, allocator, repo_path, args.items);
 }
 
 /// Remove a git worktree
-pub fn removeWorktree(allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8) !void {
+pub fn removeWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8) !void {
     log.info("removing worktree {s}", .{worktree_path});
-    try runGit(allocator, repo_path, &.{ "worktree", "remove", worktree_path });
+    try runGit(io, allocator, repo_path, &.{ "worktree", "remove", worktree_path });
 }
 
 /// List git worktrees
-pub fn listWorktrees(allocator: std.mem.Allocator, repo_path: []const u8) !void {
-    try runGit(allocator, repo_path, &.{ "worktree", "list" });
+pub fn listWorktrees(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) !void {
+    try runGit(io, allocator, repo_path, &.{ "worktree", "list" });
 }
 
 /// Get list of worktree paths
-pub fn getWorktreePaths(allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
+pub fn getWorktreePaths(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
 
@@ -82,17 +84,21 @@ pub fn getWorktreePaths(allocator: std.mem.Allocator, repo_path: []const u8) ![]
     try argv.append(allocator, "list");
     try argv.append(allocator, "--porcelain");
 
-    var child = std.process.Child.init(argv.items, allocator);
-    child.cwd = repo_path;
-    child.stderr_behavior = .Inherit;
-    child.stdout_behavior = .Pipe;
+    var child = try std.process.spawn(io, .{
+        .argv = argv.items,
+        .cwd = .{ .path = repo_path },
+        .stdin = .inherit,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
 
-    try child.spawn();
-
-    const stdout = try child.stdout.?.readToEndAlloc(allocator, 10 * 1024 * 1024);
+    const stdout_file = child.stdout.?;
+    var read_buf: [4096]u8 = undefined;
+    var r = stdout_file.reader(io, &read_buf);
+    const stdout = try r.interface.allocRemaining(allocator, .unlimited);
     defer allocator.free(stdout);
 
-    _ = try child.wait();
+    _ = try child.wait(io);
 
     // Parse porcelain format
     // Each worktree is separated by blank line
@@ -119,7 +125,7 @@ pub fn getWorktreePaths(allocator: std.mem.Allocator, repo_path: []const u8) ![]
 }
 
 /// Add a path to .git/info/exclude (local gitignore)
-pub fn addLocalExclude(allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !void {
+pub fn addLocalExclude(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !void {
     // Find .git directory (could be a file for worktrees)
     const git_path = try std.fs.path.join(allocator, &.{ repo_path, ".git" });
     defer allocator.free(git_path);
@@ -128,18 +134,19 @@ pub fn addLocalExclude(allocator: std.mem.Allocator, repo_path: []const u8, rel_
     var allocated_git_dir = false;
     defer if (allocated_git_dir) allocator.free(actual_git_dir);
 
-    const stat = std.fs.cwd().statFile(git_path) catch |err| {
+    const stat = std.Io.Dir.cwd().statFile(io, git_path, .{}) catch |err| {
         log.warn("could not stat .git: {}", .{err});
         return;
     };
 
     if (stat.kind == .file) {
         // Worktree/submodule - .git is a file pointing to actual git dir
-        const file = try std.fs.cwd().openFile(git_path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().openFile(io, git_path, .{});
+        defer file.close(io);
 
-        // Read the first line to get gitdir path
-        const content = try file.readToEndAlloc(allocator, 4096);
+        var buf: [4096]u8 = undefined;
+        var r = file.reader(io, &buf);
+        const content = try r.interface.allocRemaining(allocator, .unlimited);
         defer allocator.free(content);
 
         // Find first newline
@@ -167,7 +174,7 @@ pub fn addLocalExclude(allocator: std.mem.Allocator, repo_path: []const u8, rel_
     // Ensure info directory exists
     const info_dir = try std.fs.path.join(allocator, &.{ actual_git_dir, "info" });
     defer allocator.free(info_dir);
-    std.fs.cwd().makePath(info_dir) catch {};
+    std.Io.Dir.cwd().createDirPath(io, info_dir) catch {};
 
     // Append to exclude file
     const exclude_path = try std.fs.path.join(allocator, &.{ actual_git_dir, "info", "exclude" });
@@ -178,9 +185,11 @@ pub fn addLocalExclude(allocator: std.mem.Allocator, repo_path: []const u8, rel_
     var existing_allocated = false;
     defer if (existing_allocated) allocator.free(existing_content);
 
-    if (std.fs.cwd().openFile(exclude_path, .{})) |file| {
-        defer file.close();
-        existing_content = file.readToEndAlloc(allocator, 1024 * 1024) catch &.{};
+    if (std.Io.Dir.cwd().openFile(io, exclude_path, .{})) |file| {
+        defer file.close(io);
+        var buf: [4096]u8 = undefined;
+        var r = file.reader(io, &buf);
+        existing_content = r.interface.allocRemaining(allocator, .unlimited) catch &.{};
         existing_allocated = true;
     } else |_| {}
 
@@ -192,21 +201,18 @@ pub fn addLocalExclude(allocator: std.mem.Allocator, repo_path: []const u8, rel_
         return; // Already excluded
     }
 
-    // Append to exclude
-    const file = try std.fs.cwd().createFile(exclude_path, .{ .truncate = false });
-    defer file.close();
+    // Build the line to append
+    const needs_newline = existing_content.len > 0 and existing_content[existing_content.len - 1] != '\n';
+    const line = if (needs_newline)
+        try std.fmt.allocPrint(allocator, "\n/{s}\n", .{rel_path})
+    else
+        try std.fmt.allocPrint(allocator, "/{s}\n", .{rel_path});
+    defer allocator.free(line);
 
-    try file.seekFromEnd(0);
-
-    // Add newline if needed
-    if (existing_content.len > 0 and existing_content[existing_content.len - 1] != '\n') {
-        try file.writeAll("\n");
-    }
-
-    var buf: [1024]u8 = undefined;
-    var file_writer = file.writer(&buf);
-    try file_writer.interface.print("/{s}\n", .{rel_path});
-    try file_writer.interface.flush();
+    // Open for writing (no truncate) and write at end
+    const file = try std.Io.Dir.cwd().createFile(io, exclude_path, .{ .truncate = false });
+    defer file.close(io);
+    try file.writePositionalAll(io, line, existing_content.len);
 
     log.debug("added {s} to local exclude at {s}", .{ rel_path, exclude_path });
 }

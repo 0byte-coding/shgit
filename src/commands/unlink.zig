@@ -8,13 +8,13 @@ pub const UnlinkArgs = struct {
     path: []const u8,
 };
 
-pub fn execute(allocator: std.mem.Allocator, args: UnlinkArgs, verbose: bool) !void {
+pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: UnlinkArgs, verbose: bool) !void {
     _ = verbose;
 
     const rel_path = args.path;
 
     // Find shgit root
-    const shgit_root = try config.findShgitRoot(allocator) orelse {
+    const shgit_root = try config.findShgitRoot(io, allocator) orelse {
         log.err("not in a shgit project (no .shgit directory found)", .{});
         return error.NotShgitProject;
     };
@@ -23,7 +23,7 @@ pub fn execute(allocator: std.mem.Allocator, args: UnlinkArgs, verbose: bool) !v
     log.info("shgit root: {s}", .{shgit_root});
 
     // Load config
-    var cfg = try config.loadConfig(allocator, shgit_root);
+    var cfg = try config.loadConfig(io, allocator, shgit_root);
     defer cfg.deinit(allocator);
 
     // Determine target
@@ -37,12 +37,11 @@ pub fn execute(allocator: std.mem.Allocator, args: UnlinkArgs, verbose: bool) !v
 
     // Unlink from main repo
     log.info("unlinking {s} from repo/{s}/", .{ rel_path, target_name });
-    try unlinkFile(allocator, target_dir, rel_path);
+    try unlinkFile(io, allocator, target_dir, rel_path);
 
     // Get all worktrees and unlink from them too
-    const worktree_paths = git.getWorktreePaths(allocator, target_dir) catch |err| {
+    const worktree_paths = git.getWorktreePaths(io, allocator, target_dir) catch |err| {
         if (err == error.FileNotFound) {
-            // Not a git repo or no worktrees, skip
             log.info("unlinking complete", .{});
             return;
         }
@@ -53,28 +52,24 @@ pub fn execute(allocator: std.mem.Allocator, args: UnlinkArgs, verbose: bool) !v
         allocator.free(worktree_paths);
     }
 
-    // Construct the repo directory base path for filtering
     const repo_base = try std.fs.path.join(allocator, &.{ shgit_root, config.REPO_DIR });
     defer allocator.free(repo_base);
 
-    // Unlink from each worktree
     for (worktree_paths) |worktree_path| {
-        // Skip if it's not in the repo/ directory (e.g., .git/modules paths for submodules)
         if (!std.mem.startsWith(u8, worktree_path, repo_base)) continue;
-
-        // Skip if it's the same as target_dir (already unlinked)
         if (std.mem.eql(u8, worktree_path, target_dir)) continue;
 
         const worktree_name = std.fs.path.basename(worktree_path);
         log.info("unlinking {s} from repo/{s}/", .{ rel_path, worktree_name });
 
-        try unlinkFile(allocator, worktree_path, rel_path);
+        try unlinkFile(io, allocator, worktree_path, rel_path);
     }
 
     log.info("unlinking complete", .{});
 }
 
 fn unlinkFile(
+    io: std.Io,
     allocator: std.mem.Allocator,
     repo_path: []const u8,
     rel_path: []const u8,
@@ -82,10 +77,8 @@ fn unlinkFile(
     const target_file = try std.fs.path.join(allocator, &.{ repo_path, rel_path });
     defer allocator.free(target_file);
 
-    // Try to delete the file/symlink
-    std.fs.cwd().deleteFile(target_file) catch |err| {
+    std.Io.Dir.cwd().deleteFile(io, target_file) catch |err| {
         if (err == error.FileNotFound) {
-            // File doesn't exist, that's fine
             log.debug("file not found (already unlinked): {s}", .{target_file});
             return;
         }
@@ -95,16 +88,15 @@ fn unlinkFile(
 
     log.info("unlinked: {s}", .{rel_path});
 
-    // Remove from local git exclude
-    try removeFromLocalExclude(allocator, repo_path, rel_path);
+    try removeFromLocalExclude(io, allocator, repo_path, rel_path);
 }
 
 fn removeFromLocalExclude(
+    io: std.Io,
     allocator: std.mem.Allocator,
     repo_path: []const u8,
     rel_path: []const u8,
 ) !void {
-    // Find .git directory (could be a file for worktrees)
     const git_path = try std.fs.path.join(allocator, &.{ repo_path, ".git" });
     defer allocator.free(git_path);
 
@@ -112,17 +104,18 @@ fn removeFromLocalExclude(
     var allocated_git_dir = false;
     defer if (allocated_git_dir) allocator.free(actual_git_dir);
 
-    const stat = std.fs.cwd().statFile(git_path) catch |err| {
+    const stat = std.Io.Dir.cwd().statFile(io, git_path, .{}) catch |err| {
         log.warn("could not stat .git: {}", .{err});
         return;
     };
 
     if (stat.kind == .file) {
-        // Worktree/submodule - .git is a file pointing to actual git dir
-        const file = try std.fs.cwd().openFile(git_path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().openFile(io, git_path, .{});
+        defer file.close(io);
 
-        const content = try file.readToEndAlloc(allocator, 4096);
+        var buf: [4096]u8 = undefined;
+        var r = file.reader(io, &buf);
+        const content = try r.interface.allocRemaining(allocator, .unlimited);
         defer allocator.free(content);
 
         const newline_pos = std.mem.indexOfScalar(u8, content, '\n') orelse content.len;
@@ -147,20 +140,17 @@ fn removeFromLocalExclude(
     const exclude_path = try std.fs.path.join(allocator, &.{ actual_git_dir, "info", "exclude" });
     defer allocator.free(exclude_path);
 
-    // Read existing content
-    const file = std.fs.cwd().openFile(exclude_path, .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            // No exclude file, nothing to remove
-            return;
-        }
+    const file = std.Io.Dir.cwd().openFile(io, exclude_path, .{}) catch |err| {
+        if (err == error.FileNotFound) return;
         return err;
     };
-    defer file.close();
+    defer file.close(io);
 
-    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+    var read_buf: [4096]u8 = undefined;
+    var r = file.reader(io, &read_buf);
+    const content = try r.interface.allocRemaining(allocator, .unlimited);
     defer allocator.free(content);
 
-    // Find and remove the line with this path
     const search_pattern = try std.fmt.allocPrint(allocator, "/{s}", .{rel_path});
     defer allocator.free(search_pattern);
 
@@ -172,22 +162,17 @@ fn removeFromLocalExclude(
     while (lines.next()) |line| {
         if (std.mem.eql(u8, line, search_pattern)) {
             found = true;
-            continue; // Skip this line
+            continue;
         }
         try new_content.appendSlice(allocator, line);
         try new_content.append(allocator, '\n');
     }
 
-    if (!found) {
-        // Pattern not in exclude file, nothing to do
-        return;
-    }
+    if (!found) return;
 
-    // Write back the modified content
-    const out_file = try std.fs.cwd().createFile(exclude_path, .{ .truncate = true });
-    defer out_file.close();
-
-    try out_file.writeAll(new_content.items);
+    const out_file = try std.Io.Dir.cwd().createFile(io, exclude_path, .{ .truncate = true });
+    defer out_file.close(io);
+    try out_file.writeStreamingAll(io, new_content.items);
 
     log.debug("removed {s} from local exclude", .{rel_path});
 }

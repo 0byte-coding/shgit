@@ -42,12 +42,13 @@ pub const LINK_DIR = "link";
 pub const REPO_DIR = "repo";
 
 /// Find the shgit root directory by looking for .shgit folder
-pub fn findShgitRoot(allocator: std.mem.Allocator) !?[]const u8 {
-    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd = std.fs.cwd().realpath(".", &cwd_buf) catch |err| {
+pub fn findShgitRoot(io: std.Io, allocator: std.mem.Allocator) !?[]const u8 {
+    var cwd_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const n = std.Io.Dir.cwd().realPath(io, &cwd_buf) catch |err| {
         log.err("failed to get cwd: {}", .{err});
         return null;
     };
+    const cwd = cwd_buf[0..n];
 
     var path = try allocator.dupe(u8, cwd);
     defer allocator.free(path);
@@ -56,7 +57,7 @@ pub fn findShgitRoot(allocator: std.mem.Allocator) !?[]const u8 {
         const shgit_path = try std.fs.path.join(allocator, &.{ path, SHGIT_DIR });
         defer allocator.free(shgit_path);
 
-        if (std.fs.cwd().statFile(shgit_path)) |stat| {
+        if (std.Io.Dir.cwd().statFile(io, shgit_path, .{})) |stat| {
             if (stat.kind == .directory) {
                 return try allocator.dupe(u8, path);
             }
@@ -73,20 +74,22 @@ pub fn findShgitRoot(allocator: std.mem.Allocator) !?[]const u8 {
 }
 
 /// Load config from .shgit/config.json
-pub fn loadConfig(allocator: std.mem.Allocator, shgit_root: []const u8) !Config {
+pub fn loadConfig(io: std.Io, allocator: std.mem.Allocator, shgit_root: []const u8) !Config {
     const config_path = try std.fs.path.join(allocator, &.{ shgit_root, SHGIT_DIR, CONFIG_FILE });
     defer allocator.free(config_path);
 
-    const file = std.fs.cwd().openFile(config_path, .{}) catch |err| {
+    const file = std.Io.Dir.cwd().openFile(io, config_path, .{}) catch |err| {
         if (err == error.FileNotFound) {
             log.debug("no config file found, using defaults", .{});
             return Config{};
         }
         return err;
     };
-    defer file.close();
+    defer file.close(io);
 
-    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+    var buf: [4096]u8 = undefined;
+    var r = file.reader(io, &buf);
+    const content = try r.interface.allocRemaining(allocator, .unlimited);
     defer allocator.free(content);
 
     return parseConfig(allocator, content);
@@ -123,22 +126,22 @@ pub fn parseConfig(allocator: std.mem.Allocator, content: []const u8) !Config {
 }
 
 /// Save config to .shgit/config.json
-pub fn saveConfig(allocator: std.mem.Allocator, shgit_root: []const u8, cfg: Config) !void {
+pub fn saveConfig(io: std.Io, allocator: std.mem.Allocator, shgit_root: []const u8, cfg: Config) !void {
     const dir_path = try std.fs.path.join(allocator, &.{ shgit_root, SHGIT_DIR });
     defer allocator.free(dir_path);
 
-    std.fs.cwd().makePath(dir_path) catch |err| {
+    std.Io.Dir.cwd().createDirPath(io, dir_path) catch |err| {
         if (err != error.PathAlreadyExists) return err;
     };
 
     const config_path = try std.fs.path.join(allocator, &.{ shgit_root, SHGIT_DIR, CONFIG_FILE });
     defer allocator.free(config_path);
 
-    const file = try std.fs.cwd().createFile(config_path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().createFile(io, config_path, .{});
+    defer file.close(io);
 
     var buf: [4096]u8 = undefined;
-    var file_writer = file.writer(&buf);
+    var file_writer = file.writer(io, &buf);
     const writer = &file_writer.interface;
 
     try writer.print("{f}", .{std.json.fmt(cfg, .{ .whitespace = .indent_2 })});
@@ -148,21 +151,21 @@ pub fn saveConfig(allocator: std.mem.Allocator, shgit_root: []const u8, cfg: Con
 }
 
 /// Create initial shgit directory structure
-pub fn initShgitStructure(allocator: std.mem.Allocator, path: []const u8) !void {
+pub fn initShgitStructure(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
     // Create .shgit/
     const shgit_dir = try std.fs.path.join(allocator, &.{ path, SHGIT_DIR });
     defer allocator.free(shgit_dir);
-    try std.fs.cwd().makePath(shgit_dir);
+    try std.Io.Dir.cwd().createDirPath(io, shgit_dir);
 
     // Create link/
     const link_dir = try std.fs.path.join(allocator, &.{ path, LINK_DIR });
     defer allocator.free(link_dir);
-    try std.fs.cwd().makePath(link_dir);
+    try std.Io.Dir.cwd().createDirPath(io, link_dir);
 
     // Create repo/
     const repo_dir = try std.fs.path.join(allocator, &.{ path, REPO_DIR });
     defer allocator.free(repo_dir);
-    try std.fs.cwd().makePath(repo_dir);
+    try std.Io.Dir.cwd().createDirPath(io, repo_dir);
 
     log.info("created shgit structure at {s}", .{path});
 }

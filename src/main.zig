@@ -12,19 +12,15 @@ const version = @import("commands/version.zig");
 
 const log = std.log.scoped(.shgit);
 
-fn reportDiagnostic(diag: *clap.Diagnostic, err: anyerror) void {
-    var stderr_buf: [4096]u8 = undefined;
-    var stderr_buffered = std.fs.File.stderr().writer(&stderr_buf);
-    diag.report(&stderr_buffered.interface, err) catch {};
-    stderr_buffered.interface.flush() catch {};
+fn reportDiagnostic(io: std.Io, diag: *clap.Diagnostic, err: anyerror) void {
+    diag.reportToFile(io, std.Io.File.stderr(), err) catch {};
 }
 
-pub fn main() !void {
-    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    const gpa = gpa_state.allocator();
-    defer _ = gpa_state.deinit();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const gpa = init.gpa;
 
-    var iter = try std.process.ArgIterator.initWithAllocator(gpa);
+    var iter = try init.minimal.args.iterateAllocator(gpa);
     defer iter.deinit();
 
     // Skip executable name
@@ -58,13 +54,13 @@ pub fn main() !void {
         .allocator = gpa,
         .terminating_positional = 0,
     }) catch |err| {
-        reportDiagnostic(&diag, err);
+        reportDiagnostic(io, &diag, err);
         return err;
     };
     defer main_res.deinit();
 
     if (main_res.args.help != 0) {
-        try printMainHelp();
+        try printHelp(io, std.Io.File.stdout());
         return;
     }
 
@@ -74,22 +70,22 @@ pub fn main() !void {
     }
 
     const command = main_res.positionals[0] orelse {
-        try printMainHelp();
+        try printHelp(io, std.Io.File.stdout());
         return;
     };
 
     switch (command) {
-        .clone => try cloneMain(gpa, &iter, verbose),
-        .link => try linkMain(gpa, &iter, verbose),
-        .unlink => try unlinkMain(gpa, &iter, verbose),
-        .worktree => try worktreeMain(gpa, &iter, verbose),
-        .sync => try sync.execute(gpa, verbose),
-        .init => try init_cmd.execute(gpa, verbose),
-        .version => try version.execute(gpa, verbose),
+        .clone => try cloneMain(io, gpa, &iter, verbose),
+        .link => try linkMain(io, gpa, &iter, verbose),
+        .unlink => try unlinkMain(io, gpa, &iter, verbose),
+        .worktree => try worktreeMain(io, gpa, &iter, verbose),
+        .sync => try sync.execute(io, gpa, verbose),
+        .init => try init_cmd.execute(io, gpa, verbose),
+        .version => try version.execute(io, gpa, verbose),
     }
 }
 
-fn printMainHelp() !void {
+fn printHelp(io: std.Io, file: std.Io.File) !void {
     const help_text =
         \\shgit - Git overlay for personal project configs
         \\
@@ -111,13 +107,13 @@ fn printMainHelp() !void {
         \\Use 'shgit <command> --help' for more information on a command.
         \\
     ;
-    var stdout_buf: [4096]u8 = undefined;
-    var stdout_buffered = std.fs.File.stdout().writer(&stdout_buf);
-    try stdout_buffered.interface.writeAll(help_text);
-    try stdout_buffered.interface.flush();
+    var buf: [4096]u8 = undefined;
+    var w = file.writer(io, &buf);
+    try w.interface.writeAll(help_text);
+    try w.interface.flush();
 }
 
-fn cloneMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: bool) !void {
+fn cloneMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help         Display this help and exit.
         \\-n, --name <str>   Custom name for the shgit folder (default: derived from URL).
@@ -130,7 +126,7 @@ fn cloneMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: bo
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        reportDiagnostic(&diag, err);
+        reportDiagnostic(io, &diag, err);
         return err;
     };
     defer res.deinit();
@@ -149,10 +145,10 @@ fn cloneMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: bo
             \\  <url>               Git repository URL to clone
             \\
         ;
-        var stdout_buf: [4096]u8 = undefined;
-        var stdout_buffered = std.fs.File.stdout().writer(&stdout_buf);
-        try stdout_buffered.interface.writeAll(help_text);
-        try stdout_buffered.interface.flush();
+        var buf: [4096]u8 = undefined;
+        var w = std.Io.File.stdout().writer(io, &buf);
+        try w.interface.writeAll(help_text);
+        try w.interface.flush();
         return;
     }
 
@@ -161,10 +157,10 @@ fn cloneMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: bo
         .url = url,
         .name = res.args.name,
     };
-    try clone.execute(gpa, clone_args, verbose);
+    try clone.execute(io, gpa, clone_args, verbose);
 }
 
-fn linkMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: bool) !void {
+fn linkMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help           Display this help and exit.
         \\-t, --target <str>   Target repo/worktree to link into (default: repo/).
@@ -176,7 +172,7 @@ fn linkMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: boo
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        reportDiagnostic(&diag, err);
+        reportDiagnostic(io, &diag, err);
         return err;
     };
     defer res.deinit();
@@ -192,20 +188,20 @@ fn linkMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: boo
             \\  -t, --target <str>    Target repo/worktree to link into (default: repo/)
             \\
         ;
-        var stdout_buf: [4096]u8 = undefined;
-        var stdout_buffered = std.fs.File.stdout().writer(&stdout_buf);
-        try stdout_buffered.interface.writeAll(help_text);
-        try stdout_buffered.interface.flush();
+        var buf: [4096]u8 = undefined;
+        var w = std.Io.File.stdout().writer(io, &buf);
+        try w.interface.writeAll(help_text);
+        try w.interface.flush();
         return;
     }
 
     const link_args = link.LinkArgs{
         .target = res.args.target,
     };
-    try link.execute(gpa, link_args, verbose);
+    try link.execute(io, gpa, link_args, verbose);
 }
 
-fn unlinkMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: bool) !void {
+fn unlinkMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help  Display this help and exit.
         \\<str>
@@ -217,7 +213,7 @@ fn unlinkMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: b
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        reportDiagnostic(&diag, err);
+        reportDiagnostic(io, &diag, err);
         return err;
     };
     defer res.deinit();
@@ -235,10 +231,10 @@ fn unlinkMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: b
             \\  <path>      Relative path to unlink (e.g., packages/supabase/config.toml)
             \\
         ;
-        var stdout_buf: [4096]u8 = undefined;
-        var stdout_buffered = std.fs.File.stdout().writer(&stdout_buf);
-        try stdout_buffered.interface.writeAll(help_text);
-        try stdout_buffered.interface.flush();
+        var buf: [4096]u8 = undefined;
+        var w = std.Io.File.stdout().writer(io, &buf);
+        try w.interface.writeAll(help_text);
+        try w.interface.flush();
         return;
     }
 
@@ -246,10 +242,10 @@ fn unlinkMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: b
     const unlink_args = unlink.UnlinkArgs{
         .path = path,
     };
-    try unlink.execute(gpa, unlink_args, verbose);
+    try unlink.execute(io, gpa, unlink_args, verbose);
 }
 
-fn worktreeMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: bool) !void {
+fn worktreeMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const WorktreeSubCommand = enum {
         add,
         remove,
@@ -272,63 +268,50 @@ fn worktreeMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose:
         .allocator = gpa,
         .terminating_positional = 0,
     }) catch |err| {
-        reportDiagnostic(&diag, err);
+        reportDiagnostic(io, &diag, err);
         return err;
     };
     defer wt_res.deinit();
 
+    const worktree_help =
+        \\Usage: shgit worktree <subcommand> [args...]
+        \\
+        \\Manage git worktrees with proper symlinks.
+        \\
+        \\Options:
+        \\  -h, --help  Display this help and exit
+        \\
+        \\Subcommands:
+        \\  add         Create a new worktree with symlinks
+        \\  remove      Remove a worktree
+        \\  list        List all worktrees
+        \\
+    ;
+
     if (wt_res.args.help != 0) {
-        const help_text =
-            \\Usage: shgit worktree <subcommand> [args...]
-            \\
-            \\Manage git worktrees with proper symlinks.
-            \\
-            \\Options:
-            \\  -h, --help  Display this help and exit
-            \\
-            \\Subcommands:
-            \\  add         Create a new worktree with symlinks
-            \\  remove      Remove a worktree
-            \\  list        List all worktrees
-            \\
-        ;
-        var stdout_buf: [4096]u8 = undefined;
-        var stdout_buffered = std.fs.File.stdout().writer(&stdout_buf);
-        try stdout_buffered.interface.writeAll(help_text);
-        try stdout_buffered.interface.flush();
+        var buf: [4096]u8 = undefined;
+        var w = std.Io.File.stdout().writer(io, &buf);
+        try w.interface.writeAll(worktree_help);
+        try w.interface.flush();
         return;
     }
 
     const subcommand = wt_res.positionals[0] orelse {
-        const help_text =
-            \\Usage: shgit worktree <subcommand> [args...]
-            \\
-            \\Manage git worktrees with proper symlinks.
-            \\
-            \\Options:
-            \\  -h, --help  Display this help and exit
-            \\
-            \\Subcommands:
-            \\  add         Create a new worktree with symlinks
-            \\  remove      Remove a worktree
-            \\  list        List all worktrees
-            \\
-        ;
-        var stdout_buf: [4096]u8 = undefined;
-        var stdout_buffered = std.fs.File.stdout().writer(&stdout_buf);
-        try stdout_buffered.interface.writeAll(help_text);
-        try stdout_buffered.interface.flush();
+        var buf: [4096]u8 = undefined;
+        var w = std.Io.File.stdout().writer(io, &buf);
+        try w.interface.writeAll(worktree_help);
+        try w.interface.flush();
         return;
     };
 
     switch (subcommand) {
-        .add => try worktreeAddMain(gpa, iter, verbose),
-        .remove => try worktreeRemoveMain(gpa, iter, verbose),
-        .list => try worktree.executeList(gpa, verbose),
+        .add => try worktreeAddMain(io, gpa, iter, verbose),
+        .remove => try worktreeRemoveMain(io, gpa, iter, verbose),
+        .list => try worktree.executeList(io, gpa, verbose),
     }
 }
 
-fn worktreeAddMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: bool) !void {
+fn worktreeAddMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help             Display this help and exit.
         \\-b, --new-branch <str> Create new branch with this name.
@@ -341,7 +324,7 @@ fn worktreeAddMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbo
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        reportDiagnostic(&diag, err);
+        reportDiagnostic(io, &diag, err);
         return err;
     };
     defer res.deinit();
@@ -362,10 +345,10 @@ fn worktreeAddMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbo
             \\                             (optional when using -b; defaults to HEAD)
             \\
         ;
-        var stdout_buf: [4096]u8 = undefined;
-        var stdout_buffered = std.fs.File.stdout().writer(&stdout_buf);
-        try stdout_buffered.interface.writeAll(help_text);
-        try stdout_buffered.interface.flush();
+        var buf: [4096]u8 = undefined;
+        var w = std.Io.File.stdout().writer(io, &buf);
+        try w.interface.writeAll(help_text);
+        try w.interface.flush();
         return;
     }
 
@@ -389,10 +372,10 @@ fn worktreeAddMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbo
         .commitish = commitish,
         .new_branch = new_branch,
     };
-    try worktree.executeAdd(gpa, add_args, verbose);
+    try worktree.executeAdd(io, gpa, add_args, verbose);
 }
 
-fn worktreeRemoveMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, verbose: bool) !void {
+fn worktreeRemoveMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help  Display this help and exit.
         \\<str>
@@ -404,7 +387,7 @@ fn worktreeRemoveMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, ve
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        reportDiagnostic(&diag, err);
+        reportDiagnostic(io, &diag, err);
         return err;
     };
     defer res.deinit();
@@ -422,10 +405,10 @@ fn worktreeRemoveMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, ve
             \\  <name>      Name of the worktree to remove
             \\
         ;
-        var stdout_buf: [4096]u8 = undefined;
-        var stdout_buffered = std.fs.File.stdout().writer(&stdout_buf);
-        try stdout_buffered.interface.writeAll(help_text);
-        try stdout_buffered.interface.flush();
+        var buf: [4096]u8 = undefined;
+        var w = std.Io.File.stdout().writer(io, &buf);
+        try w.interface.writeAll(help_text);
+        try w.interface.flush();
         return;
     }
 
@@ -433,5 +416,5 @@ fn worktreeRemoveMain(gpa: std.mem.Allocator, iter: *std.process.ArgIterator, ve
     const remove_args = worktree.WorktreeRemoveArgs{
         .name = name,
     };
-    try worktree.executeRemove(gpa, remove_args, verbose);
+    try worktree.executeRemove(io, gpa, remove_args, verbose);
 }
