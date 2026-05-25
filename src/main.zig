@@ -250,6 +250,7 @@ fn worktreeMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iter
         add,
         remove,
         list,
+        prune,
     };
 
     const wt_parsers = .{
@@ -285,6 +286,7 @@ fn worktreeMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iter
         \\  add         Create a new worktree with symlinks
         \\  remove      Remove a worktree
         \\  list        List all worktrees
+        \\  prune       Prune stale worktree metadata
         \\
     ;
 
@@ -308,6 +310,7 @@ fn worktreeMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iter
         .add => try worktreeAddMain(io, gpa, iter, verbose),
         .remove => try worktreeRemoveMain(io, gpa, iter, verbose),
         .list => try worktree.executeList(io, gpa, verbose),
+        .prune => try worktree.executePrune(io, gpa, verbose),
     }
 }
 
@@ -377,7 +380,8 @@ fn worktreeAddMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.I
 
 fn worktreeRemoveMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const params = comptime clap.parseParamsComptime(
-        \\-h, --help  Display this help and exit.
+        \\-h, --help   Display this help and exit.
+        \\-f, --force  Force removal even if the worktree is dirty.
         \\<str>
         \\
     );
@@ -394,15 +398,16 @@ fn worktreeRemoveMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Arg
 
     if (res.args.help != 0) {
         const help_text =
-            \\Usage: shgit worktree remove <name>
+            \\Usage: shgit worktree remove [options] <name>
             \\
             \\Remove a worktree.
             \\
             \\Options:
-            \\  -h, --help  Display this help and exit
+            \\  -h, --help   Display this help and exit
+            \\  -f, --force  Force removal even if the worktree is dirty
             \\
             \\Arguments:
-            \\  <name>      Name of the worktree to remove
+            \\  <name>       Name of the worktree to remove
             \\
         ;
         var buf: [4096]u8 = undefined;
@@ -415,6 +420,7 @@ fn worktreeRemoveMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Arg
     const name = res.positionals[0] orelse return error.MissingName;
     const remove_args = worktree.WorktreeRemoveArgs{
         .name = name,
+        .force = res.args.force != 0,
     };
     try worktree.executeRemove(io, gpa, remove_args, verbose);
 }

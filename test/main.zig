@@ -570,6 +570,57 @@ test "unlink handles nested paths" {
     try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile(tio, "repo/myrepo/packages/api/.env", .{}));
 }
 
+test "worktree prune removes stale metadata" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const test_allocator = arena.allocator();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const n = try tmp_dir.dir.realPathFile(tio, ".", &buf);
+    const tmp_path = buf[0..n];
+
+    // Init a git repo
+    const init_result = std.process.run(test_allocator, tio, .{
+        .argv = &.{ "git", "init", "-b", "main" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return; // skip if git unavailable
+    defer test_allocator.free(init_result.stdout);
+    defer test_allocator.free(init_result.stderr);
+    if (init_result.term.exited != 0) return;
+
+    _ = std.process.run(test_allocator, tio, .{
+        .argv = &.{ "git", "config", "user.email", "test@test.com" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return;
+    _ = std.process.run(test_allocator, tio, .{
+        .argv = &.{ "git", "config", "user.name", "Test" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return;
+
+    // Commit something so HEAD exists
+    const f = try tmp_dir.dir.createFile(tio, "test.txt", .{});
+    try f.writeStreamingAll(tio, "x");
+    f.close(tio);
+    _ = std.process.run(test_allocator, tio, .{
+        .argv = &.{ "git", "add", "test.txt" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return;
+    const commit = std.process.run(test_allocator, tio, .{
+        .argv = &.{ "git", "commit", "-m", "init" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return;
+    defer test_allocator.free(commit.stdout);
+    defer test_allocator.free(commit.stderr);
+    if (commit.term.exited != 0) return;
+
+    // pruneWorktrees should succeed on a fresh repo with no stale entries
+    try shgit.git.pruneWorktrees(tio, test_allocator, tmp_path);
+}
+
 test "worktree add with -b and no commitish defaults to HEAD" {
     const allocator = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(allocator);

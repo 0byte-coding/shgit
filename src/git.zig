@@ -64,9 +64,19 @@ pub fn addWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const 
 }
 
 /// Remove a git worktree
-pub fn removeWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8) !void {
+pub fn removeWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8, force: bool) !void {
     log.info("removing worktree {s}", .{worktree_path});
-    try runGit(io, allocator, repo_path, &.{ "worktree", "remove", worktree_path });
+    if (force) {
+        try runGit(io, allocator, repo_path, &.{ "worktree", "remove", "--force", worktree_path });
+    } else {
+        try runGit(io, allocator, repo_path, &.{ "worktree", "remove", worktree_path });
+    }
+}
+
+/// Prune stale worktree metadata
+pub fn pruneWorktrees(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) !void {
+    log.info("pruning worktrees in {s}", .{repo_path});
+    try runGit(io, allocator, repo_path, &.{ "worktree", "prune" });
 }
 
 /// List git worktrees
