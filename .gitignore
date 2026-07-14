@@ -17,3 +17,7 @@ Thumbs.db
 
 # Test artifacts
 test-tmp/
+
+# Nix
+result
+result-*

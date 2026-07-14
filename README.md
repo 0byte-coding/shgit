@@ -37,11 +37,30 @@ shgit link
 
 ### Distributions
 
-Currently only available on the arch linux aur
+Currently available on the arch linux aur
 
 ```sh
 yay -S shgit-bin
 ```
+
+### Nix / NixOS
+
+A flake is provided. Run it directly:
+
+```sh
+nix run github:0byte-coding/shgit -- --help
+```
+
+Or add it to your flake inputs:
+
+```nix
+inputs.shgit.url = "github:0byte-coding/shgit";
+```
+
+then reference `inputs.shgit.packages.${system}.default` in `environment.systemPackages`,
+or use `inputs.shgit.overlays.default` and reference `pkgs.shgit`.
+
+A `devShells.default` (zig + zls) is also available via `nix develop`.
 
 ### Manual user only install
 
