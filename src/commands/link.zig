@@ -42,6 +42,9 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: LinkArgs, verbose
     // Walk link directory and create symlinks
     try linkDirectory(io, allocator, link_dir, target_dir, "");
 
+    // Apply remove_patterns to the main repo
+    try applyRemovePatterns(io, allocator, target_dir, cfg.remove_patterns);
+
     // Also link to all worktrees
     const worktree_paths = git.getWorktreePaths(io, allocator, target_dir) catch |err| {
         if (err == error.FileNotFound) {
@@ -68,9 +71,96 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: LinkArgs, verbose
         log.info("linking files from link/ to repo/{s}/", .{worktree_name});
 
         try linkDirectory(io, allocator, link_dir, worktree_path, "");
+        try applyRemovePatterns(io, allocator, worktree_path, cfg.remove_patterns);
     }
 
     log.info("linking complete", .{});
+}
+
+/// Walk `repo_base` and remove every file matching any of `patterns`.
+/// Tracked matches are additionally marked skip-worktree so the removal is
+/// hidden from git status.
+fn applyRemovePatterns(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo_base: []const u8,
+    patterns: []const []const u8,
+) !void {
+    if (patterns.len == 0) return;
+    try removeWalk(io, allocator, repo_base, "", patterns);
+}
+
+fn removeWalk(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo_base: []const u8,
+    rel_path: []const u8,
+    patterns: []const []const u8,
+) !void {
+    const dir_path = if (rel_path.len > 0)
+        try std.fs.path.join(allocator, &.{ repo_base, rel_path })
+    else
+        try allocator.dupe(u8, repo_base);
+    defer allocator.free(dir_path);
+
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch |err| {
+        if (err == error.FileNotFound or err == error.NotDir) return;
+        return err;
+    };
+    defer dir.close(io);
+
+    var iter = dir.iterate();
+    while (try iter.next(io)) |entry| {
+        // Never descend into or remove anything from the git metadata directory.
+        if (std.mem.eql(u8, entry.name, ".git")) continue;
+
+        const new_rel = if (rel_path.len > 0)
+            try std.fs.path.join(allocator, &.{ rel_path, entry.name })
+        else
+            try allocator.dupe(u8, entry.name);
+        defer allocator.free(new_rel);
+
+        if (entry.kind == .directory) {
+            try removeWalk(io, allocator, repo_base, new_rel, patterns);
+        } else {
+            var matched = false;
+            for (patterns) |pat| {
+                if (fs_utils.matchGlob(new_rel, pat)) {
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) continue;
+
+            try removeMatched(io, allocator, repo_base, new_rel);
+        }
+    }
+}
+
+fn removeMatched(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    repo_base: []const u8,
+    rel_path: []const u8,
+) !void {
+    // Hide the removal from git for tracked files before deleting it.
+    const tracked = git.isTracked(io, allocator, repo_base, rel_path) catch false;
+    if (tracked) {
+        git.skipWorktree(io, allocator, repo_base, rel_path) catch |err| {
+            log.warn("could not skip-worktree {s}: {}", .{ rel_path, err });
+        };
+    }
+
+    const target_file = try std.fs.path.join(allocator, &.{ repo_base, rel_path });
+    defer allocator.free(target_file);
+
+    std.Io.Dir.cwd().deleteFile(io, target_file) catch |err| {
+        if (err == error.FileNotFound) return;
+        log.warn("could not remove {s}: {}", .{ target_file, err });
+        return;
+    };
+
+    log.info("removed: {s}", .{rel_path});
 }
 
 fn linkDirectory(
@@ -133,6 +223,17 @@ fn linkFile(
     const rel_link = try fs_utils.relativePath(allocator, target_file, link_file);
     defer allocator.free(rel_link);
 
+    // Determine whether the target repo already tracks this file. If so, we
+    // shadow it: set skip-worktree *before* swapping the file so git does not
+    // report the symlink as a modification. Otherwise we fall back to the local
+    // exclude mechanism for untracked files.
+    const tracked = git.isTracked(io, allocator, target_base, rel_path) catch false;
+    if (tracked) {
+        git.skipWorktree(io, allocator, target_base, rel_path) catch |err| {
+            log.warn("could not shadow tracked file {s}: {}", .{ rel_path, err });
+        };
+    }
+
     // Remove existing file/symlink at target
     std.Io.Dir.cwd().deleteFile(io, target_file) catch |err| {
         if (err != error.FileNotFound) {
@@ -148,6 +249,8 @@ fn linkFile(
 
     log.info("linked: {s}", .{rel_path});
 
-    // Add to local git exclude
-    try git.addLocalExclude(io, allocator, target_base, rel_path);
+    // For untracked files, add to local git exclude so the new symlink is ignored.
+    if (!tracked) {
+        try git.addLocalExclude(io, allocator, target_base, rel_path);
+    }
 }

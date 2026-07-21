@@ -20,6 +20,53 @@ fn runGit(io: std.Io, allocator: std.mem.Allocator, cwd: ?[]const u8, args: []co
     _ = try child.wait(io);
 }
 
+/// Run a git command silently and return true if it exited successfully (code 0).
+/// stdout/stderr are discarded so callers can probe git state without noise.
+fn runGitProbe(io: std.Io, allocator: std.mem.Allocator, cwd: ?[]const u8, args: []const []const u8) !bool {
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+
+    try argv.append(allocator, "git");
+    try argv.appendSlice(allocator, args);
+
+    var child = try std.process.spawn(io, .{
+        .argv = argv.items,
+        .cwd = if (cwd) |p| .{ .path = p } else .inherit,
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    const term = try child.wait(io);
+    return switch (term) {
+        .exited => |code| code == 0,
+        else => false,
+    };
+}
+
+/// Returns true if `rel_path` is tracked by git in the repo/worktree at `repo_path`.
+pub fn isTracked(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !bool {
+    return runGitProbe(io, allocator, repo_path, &.{ "ls-files", "--error-unmatch", "--", rel_path });
+}
+
+/// Mark a tracked file with `--skip-worktree` so local changes/deletions are
+/// hidden from git status. No-op semantics if the file is not tracked (git errors).
+pub fn skipWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !void {
+    const ok = try runGitProbe(io, allocator, repo_path, &.{ "update-index", "--skip-worktree", "--", rel_path });
+    if (!ok) {
+        log.warn("could not set skip-worktree on {s}", .{rel_path});
+    } else {
+        log.debug("skip-worktree set on {s}", .{rel_path});
+    }
+}
+
+/// Clear `--skip-worktree` on a tracked file (used by teardown/unlink flows).
+pub fn noSkipWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !void {
+    const ok = try runGitProbe(io, allocator, repo_path, &.{ "update-index", "--no-skip-worktree", "--", rel_path });
+    if (!ok) {
+        log.debug("could not clear skip-worktree on {s} (maybe untracked)", .{rel_path});
+    }
+}
+
 /// Initialize a git repository
 pub fn init(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
     log.info("git init {s}", .{path});

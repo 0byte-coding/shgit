@@ -10,6 +10,32 @@ Store project-specific files (configs, env templates) that can't be committed to
 - `shgit link` - Symlink files from `link/` into repo, add to local gitignore
 - `shgit worktree add <name>` - Create worktree with proper symlinks
 - Config-based env file syncing between main repo and worktrees
+- `remove_patterns` - Delete unwanted files from the target repo, hidden from git
+
+## Shadowing & removing existing files
+
+`shgit link` overlays your `link/` files onto the target repo even when a file
+of the same name already exists there. If the existing file is **tracked** by
+the target repo, shgit marks it `git update-index --skip-worktree` before
+swapping it, so the overlay never shows up in `git status`. Untracked files are
+added to `.git/info/exclude` instead.
+
+Use `remove_patterns` in the config to declare files that exist in the target
+repo but you don't want. On `shgit link` they are deleted from the repo (and
+every worktree); tracked matches are additionally `--skip-worktree`'d so the
+deletion stays invisible to git.
+
+Both `remove_patterns` and `sync_patterns` use the same gitignore-style glob
+matcher (`*`, `**`, `?`, `[abc]`, a leading `/` to anchor to the repo root, and
+a trailing `/` for directory patterns).
+
+```json
+{
+  "main_repo": "foorepo",
+  "sync_patterns": [{ "pattern": ".env", "mode": "symlink" }],
+  "remove_patterns": ["**/*.log", ".vscode/", "docs/legacy.md"]
+}
+```
 
 ## Structure
 

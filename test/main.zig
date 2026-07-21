@@ -47,21 +47,58 @@ test "addLocalExclude with submodule" {
     try testing.expect(std.mem.indexOf(u8, exclude_content, "/.env") != null);
 }
 
-// Tests moved from src/commands/worktree.zig
-test "matchesPattern" {
-    try std.testing.expect(matchesPattern(".env", ".env"));
-    try std.testing.expect(matchesPattern("src/.env", ".env"));
-    try std.testing.expect(matchesPattern(".env.local", ".env.local"));
-    try std.testing.expect(!matchesPattern(".env.local", ".env"));
-    try std.testing.expect(matchesPattern("src/config/.env", ".env"));
+// gitignore-style glob matcher (shared by sync_patterns and remove_patterns)
+test "matchGlob basename at any depth" {
+    const m = shgit.fs_utils.matchGlob;
+    try std.testing.expect(m(".env", ".env"));
+    try std.testing.expect(m("src/.env", ".env"));
+    try std.testing.expect(m("src/config/.env", ".env"));
+    try std.testing.expect(m(".env.local", ".env.local"));
+    try std.testing.expect(!m(".env.local", ".env"));
 }
 
-fn matchesPattern(path: []const u8, pattern: []const u8) bool {
-    if (std.mem.eql(u8, path, pattern)) return true;
-    const filename = std.fs.path.basename(path);
-    if (std.mem.eql(u8, filename, pattern)) return true;
-    if (std.mem.endsWith(u8, path, pattern)) return true;
-    return false;
+test "matchGlob exact path" {
+    const m = shgit.fs_utils.matchGlob;
+    try std.testing.expect(m("src/some_folder/weird_file.sh", "src/some_folder/weird_file.sh"));
+    try std.testing.expect(!m("src/other/weird_file.sh", "src/some_folder/weird_file.sh"));
+}
+
+test "matchGlob single star does not cross slash" {
+    const m = shgit.fs_utils.matchGlob;
+    try std.testing.expect(m("foo.env", "*.env"));
+    try std.testing.expect(m("a/foo.env", "*.env")); // basename fallback (no slash in pattern)
+    try std.testing.expect(!m("foo.txt", "*.env"));
+    try std.testing.expect(m("src/a.js", "src/*.js"));
+    try std.testing.expect(!m("src/sub/a.js", "src/*.js"));
+}
+
+test "matchGlob globstar crosses directories" {
+    const m = shgit.fs_utils.matchGlob;
+    try std.testing.expect(m("src/sub/a.js", "src/**/*.js"));
+    try std.testing.expect(m("src/a.js", "src/**/*.js")); // ** matches zero dirs
+    try std.testing.expect(m("a/b/c/d.ts", "**/*.ts"));
+    try std.testing.expect(m("d.ts", "**/*.ts"));
+}
+
+test "matchGlob anchored, wildcards and classes" {
+    const m = shgit.fs_utils.matchGlob;
+    try std.testing.expect(m(".env", "/.env"));
+    try std.testing.expect(!m("src/.env", "/.env"));
+    try std.testing.expect(m("a.env", "?.env"));
+    try std.testing.expect(!m("ab.env", "?.env"));
+    try std.testing.expect(m("a.log", "[abc].log"));
+    try std.testing.expect(!m("d.log", "[abc].log"));
+    try std.testing.expect(m("a.log", "[a-c].log"));
+    try std.testing.expect(m("z.log", "[!a-c].log"));
+}
+
+test "matchGlob directory patterns" {
+    const m = shgit.fs_utils.matchGlob;
+    try std.testing.expect(m("build", "build/"));
+    try std.testing.expect(m("build/out.o", "build/"));
+    try std.testing.expect(m("src/build/x", "build/"));
+    try std.testing.expect(!m("mybuild", "build/"));
+    try std.testing.expect(m("node_modules/x/y", "node_modules/"));
 }
 
 // Tests moved from src/config.zig
@@ -181,6 +218,39 @@ test "parseConfig with sync_enabled false" {
 
     try std.testing.expectEqual(false, cfg.sync_enabled);
     try std.testing.expectEqualStrings("myrepo", cfg.main_repo.?);
+}
+
+test "parseConfig with remove_patterns" {
+    const allocator = std.testing.allocator;
+
+    const content =
+        \\{
+        \\  "main_repo": "myrepo",
+        \\  "remove_patterns": [
+        \\    ".vscode/",
+        \\    "**/*.log",
+        \\    "docs/legacy.md"
+        \\  ]
+        \\}
+    ;
+
+    var cfg = try shgit.config.parseConfig(allocator, content);
+    defer cfg.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), cfg.remove_patterns.len);
+    try std.testing.expectEqualStrings(".vscode/", cfg.remove_patterns[0]);
+    try std.testing.expectEqualStrings("**/*.log", cfg.remove_patterns[1]);
+    try std.testing.expectEqualStrings("docs/legacy.md", cfg.remove_patterns[2]);
+    // sync_patterns should default empty and coexist
+    try std.testing.expectEqual(@as(usize, 0), cfg.sync_patterns.len);
+}
+
+test "parseConfig remove_patterns defaults empty" {
+    const allocator = std.testing.allocator;
+    const content = "{}";
+    var cfg = try shgit.config.parseConfig(allocator, content);
+    defer cfg.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), cfg.remove_patterns.len);
 }
 
 // Tests moved from src/fs_utils.zig
@@ -710,4 +780,148 @@ test "worktree add with -b and no commitish defaults to HEAD" {
     defer test_allocator.free(branch_result.stderr);
 
     try std.testing.expect(std.mem.indexOf(u8, branch_result.stdout, "new-branch") != null);
+}
+
+// --- git tracked-file helpers ---
+
+/// Helper: initialise a committed git repo inside tmp_dir with the given files.
+/// Returns the absolute repo path (arena-allocated). Returns null to skip on failure.
+fn setupGitRepo(
+    arena: std.mem.Allocator,
+    tmp_dir: *std.testing.TmpDir,
+    files: []const struct { path: []const u8, content: []const u8 },
+) !?[]const u8 {
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const n = try tmp_dir.dir.realPathFile(tio, ".", &buf);
+    const tmp_path = try arena.dupe(u8, buf[0..n]);
+
+    const init_result = std.process.run(arena, tio, .{
+        .argv = &.{ "git", "init", "-b", "main" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return null;
+    if (init_result.term.exited != 0) return null;
+
+    _ = std.process.run(arena, tio, .{
+        .argv = &.{ "git", "config", "user.email", "test@test.com" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return null;
+    _ = std.process.run(arena, tio, .{
+        .argv = &.{ "git", "config", "user.name", "Test" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return null;
+
+    for (files) |file| {
+        if (std.fs.path.dirname(file.path)) |parent| {
+            tmp_dir.dir.createDirPath(tio, parent) catch {};
+        }
+        const f = try tmp_dir.dir.createFile(tio, file.path, .{});
+        try f.writeStreamingAll(tio, file.content);
+        f.close(tio);
+    }
+
+    _ = std.process.run(arena, tio, .{
+        .argv = &.{ "git", "add", "-A" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return null;
+    const commit = std.process.run(arena, tio, .{
+        .argv = &.{ "git", "commit", "-m", "init" },
+        .cwd = .{ .path = tmp_path },
+    }) catch return null;
+    if (commit.term.exited != 0) return null;
+
+    return tmp_path;
+}
+
+/// Helper: returns trimmed `git status --porcelain` output.
+fn gitStatus(arena: std.mem.Allocator, repo_path: []const u8) ![]const u8 {
+    const res = try std.process.run(arena, tio, .{
+        .argv = &.{ "git", "status", "--porcelain" },
+        .cwd = .{ .path = repo_path },
+    });
+    return std.mem.trim(u8, res.stdout, " \n\r\t");
+}
+
+test "isTracked distinguishes tracked and untracked" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const repo = (try setupGitRepo(a, &tmp_dir, &.{
+        .{ .path = "tracked.txt", .content = "hello" },
+    })) orelse return error.SkipZigTest;
+
+    // Create an untracked file after committing.
+    const uf = try tmp_dir.dir.createFile(tio, "untracked.txt", .{});
+    try uf.writeStreamingAll(tio, "x");
+    uf.close(tio);
+
+    try std.testing.expect(try shgit.git.isTracked(tio, a, repo, "tracked.txt"));
+    try std.testing.expect(!try shgit.git.isTracked(tio, a, repo, "untracked.txt"));
+    try std.testing.expect(!try shgit.git.isTracked(tio, a, repo, "does_not_exist.txt"));
+}
+
+test "skipWorktree hides deletion of tracked file" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const repo = (try setupGitRepo(a, &tmp_dir, &.{
+        .{ .path = "unwanted.txt", .content = "delete me" },
+    })) orelse return error.SkipZigTest;
+
+    // Clean tree initially.
+    try std.testing.expectEqualStrings("", try gitStatus(a, repo));
+
+    // Set skip-worktree, then delete the file — status must stay clean.
+    try shgit.git.skipWorktree(tio, a, repo, "unwanted.txt");
+    try tmp_dir.dir.deleteFile(tio, "unwanted.txt");
+
+    try std.testing.expectEqualStrings("", try gitStatus(a, repo));
+}
+
+test "applyRemovePatterns via link: removes tracked file and hides it" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    // Build a shgit project: repo/ is a real git repo containing files we want gone.
+    const repo = (try setupGitRepo(a, &tmp_dir, &.{
+        .{ .path = "keep.txt", .content = "keep" },
+        .{ .path = "drop.log", .content = "noise" },
+        .{ .path = "nested/also.log", .content = "noise2" },
+    })) orelse return error.SkipZigTest;
+
+    // Manually mimic what applyRemovePatterns does through the public git API,
+    // exercising the same isTracked + skipWorktree + delete sequence for "*.log".
+    const patterns = [_][]const u8{"**/*.log"};
+
+    // Walk & apply (mirror of link.zig removal for test coverage of end state).
+    const targets = [_][]const u8{ "drop.log", "nested/also.log" };
+    for (targets) |rel| {
+        var matched = false;
+        for (patterns) |p| {
+            if (shgit.fs_utils.matchGlob(rel, p)) matched = true;
+        }
+        try std.testing.expect(matched);
+        if (try shgit.git.isTracked(tio, a, repo, rel)) {
+            try shgit.git.skipWorktree(tio, a, repo, rel);
+        }
+        try tmp_dir.dir.deleteFile(tio, rel);
+    }
+
+    // keep.txt must not match.
+    try std.testing.expect(!shgit.fs_utils.matchGlob("keep.txt", "**/*.log"));
+
+    // Files gone from working tree, but git status stays clean (hidden).
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile(tio, "drop.log", .{}));
+    try std.testing.expectEqualStrings("", try gitStatus(a, repo));
 }

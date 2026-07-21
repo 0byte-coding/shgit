@@ -107,7 +107,7 @@ fn walkAndSync(
         if (entry.kind == .directory) {
             try walkAndSync(io, allocator, main_base, worktree_base, new_rel, pattern, mode);
         } else {
-            if (matchesPattern(new_rel, pattern) or matchesPattern(entry.name, pattern)) {
+            if (fs_utils.matchGlob(new_rel, pattern)) {
                 const src = try std.fs.path.join(allocator, &.{ main_base, new_rel });
                 defer allocator.free(src);
 
@@ -146,12 +146,4 @@ fn walkAndSync(
             }
         }
     }
-}
-
-fn matchesPattern(path: []const u8, pattern: []const u8) bool {
-    if (std.mem.eql(u8, path, pattern)) return true;
-    const filename = std.fs.path.basename(path);
-    if (std.mem.eql(u8, filename, pattern)) return true;
-    if (std.mem.endsWith(u8, path, pattern)) return true;
-    return false;
 }

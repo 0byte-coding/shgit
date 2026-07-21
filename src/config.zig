@@ -15,8 +15,13 @@ pub const SyncPattern = struct {
 };
 
 pub const Config = struct {
-    /// Patterns for files to sync from main repo to worktrees (like .gitignore patterns)
+    /// Patterns for files to sync from main repo to worktrees (gitignore-style patterns)
     sync_patterns: []const SyncPattern = &.{},
+    /// Gitignore-style patterns for files that exist in the target repo but should
+    /// be removed. On `shgit link` these are deleted from the repo (and every
+    /// worktree); if a matched file is tracked by git it is additionally marked
+    /// `--skip-worktree` so the deletion does not show up in git status.
+    remove_patterns: []const []const u8 = &.{},
     /// Main repo directory name (default: first directory in repo/)
     main_repo: ?[]const u8 = null,
     /// Whether sync_patterns feature is enabled (default: true)
@@ -28,6 +33,12 @@ pub const Config = struct {
         }
         if (self.sync_patterns.len > 0) {
             allocator.free(self.sync_patterns);
+        }
+        for (self.remove_patterns) |p| {
+            allocator.free(p);
+        }
+        if (self.remove_patterns.len > 0) {
+            allocator.free(self.remove_patterns);
         }
         if (self.main_repo) |repo| {
             allocator.free(repo);
@@ -120,6 +131,14 @@ pub fn parseConfig(allocator: std.mem.Allocator, content: []const u8) !Config {
             };
         }
         cfg.sync_patterns = patterns;
+    }
+
+    if (parsed.value.remove_patterns.len > 0) {
+        const patterns = try allocator.alloc([]const u8, parsed.value.remove_patterns.len);
+        for (parsed.value.remove_patterns, 0..) |p, i| {
+            patterns[i] = try allocator.dupe(u8, p);
+        }
+        cfg.remove_patterns = patterns;
     }
 
     return cfg;
