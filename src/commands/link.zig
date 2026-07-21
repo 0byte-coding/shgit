@@ -13,7 +13,7 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: LinkArgs, verbose
     _ = verbose;
 
     // Find shgit root
-    const shgit_root = try config.findShgitRoot(io, allocator) orelse {
+    const shgit_root = try config.find_shgit_root(io, allocator) orelse {
         log.err("not in a shgit project (no .shgit directory found)", .{});
         return error.NotShgitProject;
     };
@@ -22,7 +22,7 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: LinkArgs, verbose
     log.info("shgit root: {s}", .{shgit_root});
 
     // Load config
-    var cfg = try config.loadConfig(io, allocator, shgit_root);
+    var cfg = try config.load_config(io, allocator, shgit_root);
     defer cfg.deinit(allocator);
 
     // Determine target
@@ -40,13 +40,13 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: LinkArgs, verbose
     log.info("linking files from link/ to repo/{s}/", .{target_name});
 
     // Walk link directory and create symlinks
-    try linkDirectory(io, allocator, link_dir, target_dir, "");
+    try link_directory(io, allocator, link_dir, target_dir, "");
 
     // Apply remove_patterns to the main repo
-    try applyRemovePatterns(io, allocator, target_dir, cfg.remove_patterns);
+    try apply_remove_patterns(io, allocator, target_dir, cfg.remove_patterns);
 
     // Also link to all worktrees
-    const worktree_paths = git.getWorktreePaths(io, allocator, target_dir) catch |err| {
+    const worktree_paths = git.get_worktree_paths(io, allocator, target_dir) catch |err| {
         if (err == error.FileNotFound) {
             log.info("linking complete", .{});
             return;
@@ -70,8 +70,8 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: LinkArgs, verbose
         const worktree_name = std.fs.path.basename(worktree_path);
         log.info("linking files from link/ to repo/{s}/", .{worktree_name});
 
-        try linkDirectory(io, allocator, link_dir, worktree_path, "");
-        try applyRemovePatterns(io, allocator, worktree_path, cfg.remove_patterns);
+        try link_directory(io, allocator, link_dir, worktree_path, "");
+        try apply_remove_patterns(io, allocator, worktree_path, cfg.remove_patterns);
     }
 
     log.info("linking complete", .{});
@@ -84,7 +84,7 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: LinkArgs, verbose
 /// trees such as `node_modules/`, `dist/`, etc. — shgit should never touch
 /// files git itself is ignoring. Tracked matches are additionally marked
 /// skip-worktree so the removal is hidden from git status.
-fn applyRemovePatterns(
+fn apply_remove_patterns(
     io: std.Io,
     allocator: std.mem.Allocator,
     repo_base: []const u8,
@@ -92,7 +92,7 @@ fn applyRemovePatterns(
 ) !void {
     if (patterns.len == 0) return;
 
-    const candidates = git.listNonIgnoredFiles(io, allocator, repo_base) catch |err| {
+    const candidates = git.list_non_ignored_files(io, allocator, repo_base) catch |err| {
         log.warn("could not list files for remove_patterns (skipping): {}", .{err});
         return;
     };
@@ -104,27 +104,27 @@ fn applyRemovePatterns(
     for (candidates) |rel| {
         var matched = false;
         for (patterns) |pat| {
-            if (fs_utils.matchGlob(rel, pat)) {
+            if (fs_utils.match_glob(rel, pat)) {
                 matched = true;
                 break;
             }
         }
         if (!matched) continue;
 
-        try removeMatched(io, allocator, repo_base, rel);
+        try remove_matched(io, allocator, repo_base, rel);
     }
 }
 
-fn removeMatched(
+fn remove_matched(
     io: std.Io,
     allocator: std.mem.Allocator,
     repo_base: []const u8,
     rel_path: []const u8,
 ) !void {
     // Hide the removal from git for tracked files before deleting it.
-    const tracked = git.isTracked(io, allocator, repo_base, rel_path) catch false;
+    const tracked = git.is_tracked(io, allocator, repo_base, rel_path) catch false;
     if (tracked) {
-        git.skipWorktree(io, allocator, repo_base, rel_path) catch |err| {
+        git.skip_worktree(io, allocator, repo_base, rel_path) catch |err| {
             log.warn("could not skip-worktree {s}: {}", .{ rel_path, err });
         };
     }
@@ -141,7 +141,7 @@ fn removeMatched(
     log.info("removed: {s}", .{rel_path});
 }
 
-fn linkDirectory(
+fn link_directory(
     io: std.Io,
     allocator: std.mem.Allocator,
     link_base: []const u8,
@@ -177,14 +177,14 @@ fn linkDirectory(
             std.Io.Dir.cwd().createDirPath(io, target_subdir) catch |err| {
                 if (err != error.PathAlreadyExists) return err;
             };
-            try linkDirectory(io, allocator, link_base, target_base, new_rel);
+            try link_directory(io, allocator, link_base, target_base, new_rel);
         } else {
-            try linkFile(io, allocator, link_base, target_base, new_rel);
+            try link_single_file(io, allocator, link_base, target_base, new_rel);
         }
     }
 }
 
-fn linkFile(
+fn link_single_file(
     io: std.Io,
     allocator: std.mem.Allocator,
     link_base: []const u8,
@@ -198,16 +198,16 @@ fn linkFile(
     defer allocator.free(target_file);
 
     // Calculate relative path from target to link
-    const rel_link = try fs_utils.relativePath(allocator, target_file, link_file);
+    const rel_link = try fs_utils.relative_path(allocator, target_file, link_file);
     defer allocator.free(rel_link);
 
     // Determine whether the target repo already tracks this file. If so, we
     // shadow it: set skip-worktree *before* swapping the file so git does not
     // report the symlink as a modification. Otherwise we fall back to the local
     // exclude mechanism for untracked files.
-    const tracked = git.isTracked(io, allocator, target_base, rel_path) catch false;
+    const tracked = git.is_tracked(io, allocator, target_base, rel_path) catch false;
     if (tracked) {
-        git.skipWorktree(io, allocator, target_base, rel_path) catch |err| {
+        git.skip_worktree(io, allocator, target_base, rel_path) catch |err| {
             log.warn("could not shadow tracked file {s}: {}", .{ rel_path, err });
         };
     }
@@ -229,6 +229,6 @@ fn linkFile(
 
     // For untracked files, add to local git exclude so the new symlink is ignored.
     if (!tracked) {
-        try git.addLocalExclude(io, allocator, target_base, rel_path);
+        try git.add_local_exclude(io, allocator, target_base, rel_path);
     }
 }

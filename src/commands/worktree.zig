@@ -17,7 +17,7 @@ pub const WorktreeRemoveArgs = struct {
     force: bool = false,
 };
 
-pub fn executeAdd(io: std.Io, allocator: std.mem.Allocator, args: WorktreeAddArgs, verbose: bool) !void {
+pub fn execute_add(io: std.Io, allocator: std.mem.Allocator, args: WorktreeAddArgs, verbose: bool) !void {
     _ = verbose;
 
     const name = args.name;
@@ -28,13 +28,13 @@ pub fn executeAdd(io: std.Io, allocator: std.mem.Allocator, args: WorktreeAddArg
     const create_branch = new_branch != null;
     const start_point = if (new_branch != null) commitish else null;
 
-    const shgit_root = try config.findShgitRoot(io, allocator) orelse {
+    const shgit_root = try config.find_shgit_root(io, allocator) orelse {
         log.err("not in a shgit project", .{});
         return error.NotShgitProject;
     };
     defer allocator.free(shgit_root);
 
-    var cfg = try config.loadConfig(io, allocator, shgit_root);
+    var cfg = try config.load_config(io, allocator, shgit_root);
     defer cfg.deinit(allocator);
 
     const main_repo = cfg.main_repo orelse {
@@ -48,30 +48,30 @@ pub fn executeAdd(io: std.Io, allocator: std.mem.Allocator, args: WorktreeAddArg
     const worktree_path = try std.fs.path.join(allocator, &.{ shgit_root, config.REPO_DIR, name });
     defer allocator.free(worktree_path);
 
-    try git.addWorktree(io, allocator, main_repo_path, worktree_path, branch, create_branch, start_point);
+    try git.add_worktree(io, allocator, main_repo_path, worktree_path, branch, create_branch, start_point);
 
     const link_dir = try std.fs.path.join(allocator, &.{ shgit_root, config.LINK_DIR });
     defer allocator.free(link_dir);
 
-    try linkToWorktree(io, allocator, link_dir, worktree_path, "");
+    try link_to_worktree(io, allocator, link_dir, worktree_path, "");
 
-    try sync_files.syncToWorktree(io, allocator, cfg, main_repo_path, worktree_path);
+    try sync_files.sync_to_worktree(io, allocator, cfg, main_repo_path, worktree_path);
 
     log.info("worktree created at repo/{s}/", .{name});
 }
 
-pub fn executeRemove(io: std.Io, allocator: std.mem.Allocator, args: WorktreeRemoveArgs, verbose: bool) !void {
+pub fn execute_remove(io: std.Io, allocator: std.mem.Allocator, args: WorktreeRemoveArgs, verbose: bool) !void {
     _ = verbose;
 
     const name = args.name;
 
-    const shgit_root = try config.findShgitRoot(io, allocator) orelse {
+    const shgit_root = try config.find_shgit_root(io, allocator) orelse {
         log.err("not in a shgit project", .{});
         return error.NotShgitProject;
     };
     defer allocator.free(shgit_root);
 
-    var cfg = try config.loadConfig(io, allocator, shgit_root);
+    var cfg = try config.load_config(io, allocator, shgit_root);
     defer cfg.deinit(allocator);
 
     const main_repo = cfg.main_repo orelse {
@@ -90,20 +90,20 @@ pub fn executeRemove(io: std.Io, allocator: std.mem.Allocator, args: WorktreeRem
     const worktree_path = try std.fs.path.join(allocator, &.{ shgit_root, config.REPO_DIR, name });
     defer allocator.free(worktree_path);
 
-    try git.removeWorktree(io, allocator, main_repo_path, worktree_path, args.force);
+    try git.remove_worktree(io, allocator, main_repo_path, worktree_path, args.force);
 
     log.info("removed worktree '{s}'", .{name});
 }
 
-pub fn executePrune(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !void {
+pub fn execute_prune(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !void {
     _ = verbose;
-    const shgit_root = try config.findShgitRoot(io, allocator) orelse {
+    const shgit_root = try config.find_shgit_root(io, allocator) orelse {
         log.err("not in a shgit project", .{});
         return error.NotShgitProject;
     };
     defer allocator.free(shgit_root);
 
-    var cfg = try config.loadConfig(io, allocator, shgit_root);
+    var cfg = try config.load_config(io, allocator, shgit_root);
     defer cfg.deinit(allocator);
 
     const main_repo = cfg.main_repo orelse {
@@ -114,20 +114,20 @@ pub fn executePrune(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !vo
     const main_repo_path = try std.fs.path.join(allocator, &.{ shgit_root, config.REPO_DIR, main_repo });
     defer allocator.free(main_repo_path);
 
-    try git.pruneWorktrees(io, allocator, main_repo_path);
+    try git.prune_worktrees(io, allocator, main_repo_path);
 
     log.info("pruned stale worktree metadata", .{});
 }
 
-pub fn executeList(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !void {
+pub fn execute_list(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !void {
     _ = verbose;
-    const shgit_root = try config.findShgitRoot(io, allocator) orelse {
+    const shgit_root = try config.find_shgit_root(io, allocator) orelse {
         log.err("not in a shgit project", .{});
         return error.NotShgitProject;
     };
     defer allocator.free(shgit_root);
 
-    var cfg = try config.loadConfig(io, allocator, shgit_root);
+    var cfg = try config.load_config(io, allocator, shgit_root);
     defer cfg.deinit(allocator);
 
     const main_repo = cfg.main_repo orelse {
@@ -138,10 +138,10 @@ pub fn executeList(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !voi
     const main_repo_path = try std.fs.path.join(allocator, &.{ shgit_root, config.REPO_DIR, main_repo });
     defer allocator.free(main_repo_path);
 
-    try git.listWorktrees(io, allocator, main_repo_path);
+    try git.list_worktrees(io, allocator, main_repo_path);
 }
 
-fn linkToWorktree(
+fn link_to_worktree(
     io: std.Io,
     allocator: std.mem.Allocator,
     link_base: []const u8,
@@ -174,7 +174,7 @@ fn linkToWorktree(
             std.Io.Dir.cwd().createDirPath(io, target_subdir) catch |err| {
                 if (err != error.PathAlreadyExists) return err;
             };
-            try linkToWorktree(io, allocator, link_base, worktree_base, new_rel);
+            try link_to_worktree(io, allocator, link_base, worktree_base, new_rel);
         } else {
             const link_file = try std.fs.path.join(allocator, &.{ link_base, new_rel });
             defer allocator.free(link_file);
@@ -182,12 +182,12 @@ fn linkToWorktree(
             const target_file = try std.fs.path.join(allocator, &.{ worktree_base, new_rel });
             defer allocator.free(target_file);
 
-            const rel_link = try fs_utils.relativePath(allocator, target_file, link_file);
+            const rel_link = try fs_utils.relative_path(allocator, target_file, link_file);
             defer allocator.free(rel_link);
 
             std.Io.Dir.cwd().deleteFile(io, target_file) catch {};
             try std.Io.Dir.cwd().symLink(io, rel_link, target_file, .{});
-            try git.addLocalExclude(io, allocator, worktree_base, new_rel);
+            try git.add_local_exclude(io, allocator, worktree_base, new_rel);
 
             log.info("linked: {s}", .{new_rel});
         }

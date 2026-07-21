@@ -8,7 +8,7 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !void {
     _ = verbose;
 
     // Check if already a shgit project
-    if (try config.findShgitRoot(io, allocator)) |root| {
+    if (try config.find_shgit_root(io, allocator)) |root| {
         allocator.free(root);
         log.err("already in a shgit project", .{});
         return error.AlreadyShgitProject;
@@ -31,7 +31,7 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !void {
     }
 
     // Create shgit structure
-    try config.initShgitStructure(io, allocator, cwd);
+    try config.init_shgit_structure(io, allocator, cwd);
 
     // Create default config with .env sync pattern
     const default_patterns = try allocator.alloc(config.SyncPattern, 1);
@@ -42,7 +42,7 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !void {
     };
     defer cfg.deinit(allocator);
 
-    try config.saveConfig(io, allocator, cwd, cfg);
+    try config.save_config(io, allocator, cwd, cfg);
 
     // Create .gitignore if not exists
     const gitignore_path = try std.fs.path.join(allocator, &.{ cwd, ".gitignore" });

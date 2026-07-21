@@ -11,7 +11,7 @@ const version = @import("commands/version.zig");
 
 const log = std.log.scoped(.shgit);
 
-fn reportDiagnostic(io: std.Io, diag: *clap.Diagnostic, err: anyerror) void {
+fn report_diagnostic(io: std.Io, diag: *clap.Diagnostic, err: anyerror) void {
     diag.reportToFile(io, std.Io.File.stderr(), err) catch {};
 }
 
@@ -52,13 +52,13 @@ pub fn main(init: std.process.Init) !void {
         .allocator = gpa,
         .terminating_positional = 0,
     }) catch |err| {
-        reportDiagnostic(io, &diag, err);
+        report_diagnostic(io, &diag, err);
         return err;
     };
     defer main_res.deinit();
 
     if (main_res.args.help != 0) {
-        try printHelp(io, std.Io.File.stdout());
+        try print_help(io, std.Io.File.stdout());
         return;
     }
 
@@ -68,21 +68,21 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const command = main_res.positionals[0] orelse {
-        try printHelp(io, std.Io.File.stdout());
+        try print_help(io, std.Io.File.stdout());
         return;
     };
 
     switch (command) {
-        .clone => try cloneMain(io, gpa, &iter, verbose),
-        .link => try linkMain(io, gpa, &iter, verbose),
-        .unlink => try unlinkMain(io, gpa, &iter, verbose),
-        .worktree => try worktreeMain(io, gpa, &iter, verbose),
+        .clone => try clone_main(io, gpa, &iter, verbose),
+        .link => try link_main(io, gpa, &iter, verbose),
+        .unlink => try unlink_main(io, gpa, &iter, verbose),
+        .worktree => try worktree_main(io, gpa, &iter, verbose),
         .init => try init_cmd.execute(io, gpa, verbose),
         .version => try version.execute(io, gpa, verbose),
     }
 }
 
-fn printHelp(io: std.Io, file: std.Io.File) !void {
+fn print_help(io: std.Io, file: std.Io.File) !void {
     const help_text =
         \\shgit - Git overlay for personal project configs
         \\
@@ -109,7 +109,7 @@ fn printHelp(io: std.Io, file: std.Io.File) !void {
     try w.interface.flush();
 }
 
-fn cloneMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
+fn clone_main(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help         Display this help and exit.
         \\-n, --name <str>   Custom name for the shgit folder (default: derived from URL).
@@ -122,7 +122,7 @@ fn cloneMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterato
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        reportDiagnostic(io, &diag, err);
+        report_diagnostic(io, &diag, err);
         return err;
     };
     defer res.deinit();
@@ -156,7 +156,7 @@ fn cloneMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterato
     try clone.execute(io, gpa, clone_args, verbose);
 }
 
-fn linkMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
+fn link_main(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help           Display this help and exit.
         \\-t, --target <str>   Target repo/worktree to link into (default: repo/).
@@ -168,7 +168,7 @@ fn linkMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        reportDiagnostic(io, &diag, err);
+        report_diagnostic(io, &diag, err);
         return err;
     };
     defer res.deinit();
@@ -197,7 +197,7 @@ fn linkMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator
     try link.execute(io, gpa, link_args, verbose);
 }
 
-fn unlinkMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
+fn unlink_main(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help  Display this help and exit.
         \\<str>
@@ -209,7 +209,7 @@ fn unlinkMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterat
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        reportDiagnostic(io, &diag, err);
+        report_diagnostic(io, &diag, err);
         return err;
     };
     defer res.deinit();
@@ -245,7 +245,7 @@ fn unlinkMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterat
     try unlink.execute(io, gpa, unlink_args, verbose);
 }
 
-fn worktreeMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
+fn worktree_main(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const WorktreeSubCommand = enum {
         add,
         remove,
@@ -269,7 +269,7 @@ fn worktreeMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iter
         .allocator = gpa,
         .terminating_positional = 0,
     }) catch |err| {
-        reportDiagnostic(io, &diag, err);
+        report_diagnostic(io, &diag, err);
         return err;
     };
     defer wt_res.deinit();
@@ -307,14 +307,14 @@ fn worktreeMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iter
     };
 
     switch (subcommand) {
-        .add => try worktreeAddMain(io, gpa, iter, verbose),
-        .remove => try worktreeRemoveMain(io, gpa, iter, verbose),
-        .list => try worktree.executeList(io, gpa, verbose),
-        .prune => try worktree.executePrune(io, gpa, verbose),
+        .add => try worktree_add_main(io, gpa, iter, verbose),
+        .remove => try worktree_remove_main(io, gpa, iter, verbose),
+        .list => try worktree.execute_list(io, gpa, verbose),
+        .prune => try worktree.execute_prune(io, gpa, verbose),
     }
 }
 
-fn worktreeAddMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
+fn worktree_add_main(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help             Display this help and exit.
         \\-b, --new-branch <str> Create new branch with this name.
@@ -327,7 +327,7 @@ fn worktreeAddMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.I
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        reportDiagnostic(io, &diag, err);
+        report_diagnostic(io, &diag, err);
         return err;
     };
     defer res.deinit();
@@ -375,10 +375,10 @@ fn worktreeAddMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.I
         .commitish = commitish,
         .new_branch = new_branch,
     };
-    try worktree.executeAdd(io, gpa, add_args, verbose);
+    try worktree.execute_add(io, gpa, add_args, verbose);
 }
 
-fn worktreeRemoveMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
+fn worktree_remove_main(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator, verbose: bool) !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help   Display this help and exit.
         \\-f, --force  Force removal even if the worktree is dirty.
@@ -391,7 +391,7 @@ fn worktreeRemoveMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Arg
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        reportDiagnostic(io, &diag, err);
+        report_diagnostic(io, &diag, err);
         return err;
     };
     defer res.deinit();
@@ -422,5 +422,5 @@ fn worktreeRemoveMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Arg
         .name = name,
         .force = res.args.force != 0,
     };
-    try worktree.executeRemove(io, gpa, remove_args, verbose);
+    try worktree.execute_remove(io, gpa, remove_args, verbose);
 }

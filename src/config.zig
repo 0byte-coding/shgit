@@ -53,7 +53,7 @@ pub const LINK_DIR = "link";
 pub const REPO_DIR = "repo";
 
 /// Find the shgit root directory by looking for .shgit folder
-pub fn findShgitRoot(io: std.Io, allocator: std.mem.Allocator) !?[]const u8 {
+pub fn find_shgit_root(io: std.Io, allocator: std.mem.Allocator) !?[]const u8 {
     var cwd_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const n = std.Io.Dir.cwd().realPathFile(io, ".", &cwd_buf) catch |err| {
         log.err("failed to get cwd: {}", .{err});
@@ -85,7 +85,7 @@ pub fn findShgitRoot(io: std.Io, allocator: std.mem.Allocator) !?[]const u8 {
 }
 
 /// Load config from .shgit/config.json
-pub fn loadConfig(io: std.Io, allocator: std.mem.Allocator, shgit_root: []const u8) !Config {
+pub fn load_config(io: std.Io, allocator: std.mem.Allocator, shgit_root: []const u8) !Config {
     const config_path = try std.fs.path.join(allocator, &.{ shgit_root, SHGIT_DIR, CONFIG_FILE });
     defer allocator.free(config_path);
 
@@ -103,10 +103,10 @@ pub fn loadConfig(io: std.Io, allocator: std.mem.Allocator, shgit_root: []const 
     const content = try r.interface.allocRemaining(allocator, .unlimited);
     defer allocator.free(content);
 
-    return parseConfig(allocator, content);
+    return parse_config(allocator, content);
 }
 
-pub fn parseConfig(allocator: std.mem.Allocator, content: []const u8) !Config {
+pub fn parse_config(allocator: std.mem.Allocator, content: []const u8) !Config {
     const parsed = try std.json.parseFromSlice(Config, allocator, content, .{
         .allocate = .alloc_always,
         .ignore_unknown_fields = true,
@@ -145,7 +145,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, content: []const u8) !Config {
 }
 
 /// Save config to .shgit/config.json
-pub fn saveConfig(io: std.Io, allocator: std.mem.Allocator, shgit_root: []const u8, cfg: Config) !void {
+pub fn save_config(io: std.Io, allocator: std.mem.Allocator, shgit_root: []const u8, cfg: Config) !void {
     const dir_path = try std.fs.path.join(allocator, &.{ shgit_root, SHGIT_DIR });
     defer allocator.free(dir_path);
 
@@ -170,7 +170,7 @@ pub fn saveConfig(io: std.Io, allocator: std.mem.Allocator, shgit_root: []const 
 }
 
 /// Create initial shgit directory structure
-pub fn initShgitStructure(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
+pub fn init_shgit_structure(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
     // Create .shgit/
     const shgit_dir = try std.fs.path.join(allocator, &.{ path, SHGIT_DIR });
     defer allocator.free(shgit_dir);

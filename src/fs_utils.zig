@@ -16,7 +16,7 @@ const log = std.log.scoped(.fs_utils);
 ///     and anything nested beneath it.
 ///
 /// `path` is expected to use `/` separators and no leading `/`.
-pub fn matchGlob(path: []const u8, pattern: []const u8) bool {
+pub fn match_glob(path: []const u8, pattern: []const u8) bool {
     if (pattern.len == 0) return false;
 
     var pat = pattern;
@@ -41,24 +41,24 @@ pub fn matchGlob(path: []const u8, pattern: []const u8) bool {
 
     if (dir_only) {
         // Match "pat" as a prefix path component, then anything under it.
-        if (globMatchPrefix(path, pat, anchored, has_slash)) return true;
+        if (glob_match_prefix(path, pat, anchored, has_slash)) return true;
         return false;
     }
 
     // Anchored or contains a slash: match against the full path from root.
     if (anchored or has_slash) {
-        return globMatch(path, pat);
+        return glob_match(path, pat);
     }
 
     // Unanchored, no slash: match against the full path OR the basename at any depth.
-    if (globMatch(path, pat)) return true;
+    if (glob_match(path, pat)) return true;
     const base = std.fs.path.basename(path);
-    return globMatch(base, pat);
+    return glob_match(base, pat);
 }
 
 /// For directory patterns: true if `pat` matches a leading portion of `path`
 /// on component boundaries (so `build/` matches `build` and `build/x/y`).
-fn globMatchPrefix(path: []const u8, pat: []const u8, anchored: bool, has_slash: bool) bool {
+fn glob_match_prefix(path: []const u8, pat: []const u8, anchored: bool, has_slash: bool) bool {
     // Try matching pat against every component-boundary prefix of path.
     // If not anchored and the pattern has no slash, we may also start matching
     // at any interior component (basename-at-any-depth semantics).
@@ -66,12 +66,12 @@ fn globMatchPrefix(path: []const u8, pat: []const u8, anchored: bool, has_slash:
     while (true) {
         const sub = path[start..];
         // Whole remaining path matches the pattern.
-        if (globMatch(sub, pat)) return true;
+        if (glob_match(sub, pat)) return true;
         // pattern matches a component prefix followed by "/..."
         var i: usize = 0;
         while (i < sub.len) : (i += 1) {
             if (sub[i] == '/') {
-                if (globMatch(sub[0..i], pat)) return true;
+                if (glob_match(sub[0..i], pat)) return true;
             }
         }
         if (anchored or has_slash) return false;
@@ -83,7 +83,7 @@ fn globMatchPrefix(path: []const u8, pat: []const u8, anchored: bool, has_slash:
 }
 
 /// Core glob matcher. `*` does not cross `/`, `**` does. `?` matches one non-`/`.
-fn globMatch(str: []const u8, pat: []const u8) bool {
+fn glob_match(str: []const u8, pat: []const u8) bool {
     var si: usize = 0;
     var pi: usize = 0;
 
@@ -126,7 +126,7 @@ fn globMatch(str: []const u8, pat: []const u8) bool {
                     }
                 },
                 '[' => {
-                    if (matchClass(str[si], pat, &pi)) {
+                    if (match_class(str[si], pat, &pi)) {
                         si += 1;
                         continue;
                     }
@@ -180,7 +180,7 @@ fn globMatch(str: []const u8, pat: []const u8) bool {
 /// Match a character class `[...]` starting at pat[*pi] == '['.
 /// On success advances *pi past the closing ']' and returns whether `ch` matched.
 /// If the class is malformed (no closing ']'), treats '[' literally.
-fn matchClass(ch: u8, pat: []const u8, pi: *usize) bool {
+fn match_class(ch: u8, pat: []const u8, pi: *usize) bool {
     var i = pi.* + 1;
     var negate = false;
     if (i < pat.len and (pat[i] == '!' or pat[i] == '^')) {
@@ -226,8 +226,8 @@ fn matchClass(ch: u8, pat: []const u8, pi: *usize) bool {
 }
 
 /// Calculate relative path from `from` to `to`
-/// E.g., relativePath("/a/b/c/file", "/a/x/y/target") returns "../../x/y/target"
-pub fn relativePath(allocator: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
+/// E.g., relative_path("/a/b/c/file", "/a/x/y/target") returns "../../x/y/target"
+pub fn relative_path(allocator: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
     // Get directory of 'from' (we want path relative to the directory, not the file)
     const from_dir = std.fs.path.dirname(from) orelse ".";
 

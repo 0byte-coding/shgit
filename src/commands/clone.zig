@@ -19,7 +19,7 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: CloneArgs, verbos
     }
 
     // Extract repo name from URL
-    const repo_name = custom_name orelse extractRepoName(url) orelse {
+    const repo_name = custom_name orelse extract_repo_name(url) orelse {
         log.err("could not extract repo name from URL, use --name", .{});
         return error.InvalidUrl;
     };
@@ -43,13 +43,13 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: CloneArgs, verbos
     try git.init(io, allocator, shgit_folder);
 
     // Create structure
-    try config.initShgitStructure(io, allocator, shgit_folder);
+    try config.init_shgit_structure(io, allocator, shgit_folder);
 
     // Add submodule
     const repo_path = try std.fs.path.join(allocator, &.{ config.REPO_DIR, repo_name });
     defer allocator.free(repo_path);
 
-    try git.addSubmodule(io, allocator, shgit_folder, url, repo_path);
+    try git.add_submodule(io, allocator, shgit_folder, url, repo_path);
 
     // Create .gitignore for the shgit folder
     const gitignore_path = try std.fs.path.join(allocator, &.{ shgit_folder, ".gitignore" });
@@ -73,7 +73,7 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: CloneArgs, verbos
         },
         .main_repo = repo_name,
     };
-    try config.saveConfig(io, allocator, shgit_folder, cfg);
+    try config.save_config(io, allocator, shgit_folder, cfg);
 
     // Create AGENTS.md with embedded prompt content
     const agents_md_path = try std.fs.path.join(allocator, &.{ shgit_folder, "AGENTS.md" });
@@ -87,7 +87,7 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: CloneArgs, verbos
     log.info("next: cd {s} && shgit link", .{shgit_folder});
 }
 
-fn extractRepoName(url: []const u8) ?[]const u8 {
+fn extract_repo_name(url: []const u8) ?[]const u8 {
     // Handle URLs like:
     // https://github.com/user/repo.git
     // git@github.com:user/repo.git

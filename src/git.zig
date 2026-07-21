@@ -3,7 +3,7 @@ const std = @import("std");
 const log = std.log.scoped(.git);
 
 /// Run a git command and return success/failure
-fn runGit(io: std.Io, allocator: std.mem.Allocator, cwd: ?[]const u8, args: []const []const u8) !void {
+fn run_git(io: std.Io, allocator: std.mem.Allocator, cwd: ?[]const u8, args: []const []const u8) !void {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
 
@@ -22,7 +22,7 @@ fn runGit(io: std.Io, allocator: std.mem.Allocator, cwd: ?[]const u8, args: []co
 
 /// Run a git command silently and return true if it exited successfully (code 0).
 /// stdout/stderr are discarded so callers can probe git state without noise.
-fn runGitProbe(io: std.Io, allocator: std.mem.Allocator, cwd: ?[]const u8, args: []const []const u8) !bool {
+fn run_git_probe(io: std.Io, allocator: std.mem.Allocator, cwd: ?[]const u8, args: []const []const u8) !bool {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
 
@@ -44,14 +44,14 @@ fn runGitProbe(io: std.Io, allocator: std.mem.Allocator, cwd: ?[]const u8, args:
 }
 
 /// Returns true if `rel_path` is tracked by git in the repo/worktree at `repo_path`.
-pub fn isTracked(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !bool {
-    return runGitProbe(io, allocator, repo_path, &.{ "ls-files", "--error-unmatch", "--", rel_path });
+pub fn is_tracked(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !bool {
+    return run_git_probe(io, allocator, repo_path, &.{ "ls-files", "--error-unmatch", "--", rel_path });
 }
 
 /// Mark a tracked file with `--skip-worktree` so local changes/deletions are
 /// hidden from git status. No-op semantics if the file is not tracked (git errors).
-pub fn skipWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !void {
-    const ok = try runGitProbe(io, allocator, repo_path, &.{ "update-index", "--skip-worktree", "--", rel_path });
+pub fn skip_worktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !void {
+    const ok = try run_git_probe(io, allocator, repo_path, &.{ "update-index", "--skip-worktree", "--", rel_path });
     if (!ok) {
         log.warn("could not set skip-worktree on {s}", .{rel_path});
     } else {
@@ -60,8 +60,8 @@ pub fn skipWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const
 }
 
 /// Clear `--skip-worktree` on a tracked file (used by teardown/unlink flows).
-pub fn noSkipWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !void {
-    const ok = try runGitProbe(io, allocator, repo_path, &.{ "update-index", "--no-skip-worktree", "--", rel_path });
+pub fn no_skip_worktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !void {
+    const ok = try run_git_probe(io, allocator, repo_path, &.{ "update-index", "--no-skip-worktree", "--", rel_path });
     if (!ok) {
         log.debug("could not clear skip-worktree on {s} (maybe untracked)", .{rel_path});
     }
@@ -70,7 +70,7 @@ pub fn noSkipWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []con
 /// Run `git ls-files <extra_args...>` and return the newline-separated paths as
 /// a list of owned strings (relative, `/`-separated). Caller owns each string
 /// and the slice.
-fn runLsFiles(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, extra_args: []const []const u8) ![][]const u8 {
+fn run_ls_files(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, extra_args: []const []const u8) ![][]const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
 
@@ -112,8 +112,8 @@ fn runLsFiles(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, e
 
 /// Return the list of files tracked by git in the repo/worktree at `repo_path`
 /// (relative paths, `/`-separated). Caller owns each string and the slice.
-pub fn listTrackedFiles(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
-    return runLsFiles(io, allocator, repo_path, &.{});
+pub fn list_tracked_files(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
+    return run_ls_files(io, allocator, repo_path, &.{});
 }
 
 /// Return every file git knows about that is NOT gitignored: tracked files plus
@@ -121,14 +121,14 @@ pub fn listTrackedFiles(io: std.Io, allocator: std.mem.Allocator, repo_path: []c
 /// `.git/info/exclude`, global excludes). This is the correct set to scan when
 /// applying `remove_patterns`, so ignored trees like `node_modules/` are skipped.
 /// Caller owns each string and the slice.
-pub fn listNonIgnoredFiles(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
-    return runLsFiles(io, allocator, repo_path, &.{ "--cached", "--others", "--exclude-standard" });
+pub fn list_non_ignored_files(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
+    return run_ls_files(io, allocator, repo_path, &.{ "--cached", "--others", "--exclude-standard" });
 }
 
 /// Restore a tracked file to its committed (HEAD-index) contents in the working
 /// tree, undoing a shadow or a removal. Returns true on success.
-pub fn restoreFile(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !bool {
-    const ok = try runGitProbe(io, allocator, repo_path, &.{ "checkout", "--", rel_path });
+pub fn restore_file(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !bool {
+    const ok = try run_git_probe(io, allocator, repo_path, &.{ "checkout", "--", rel_path });
     if (!ok) {
         log.warn("could not restore {s}", .{rel_path});
     } else {
@@ -140,17 +140,17 @@ pub fn restoreFile(io: std.Io, allocator: std.mem.Allocator, repo_path: []const 
 /// Initialize a git repository
 pub fn init(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
     log.info("git init {s}", .{path});
-    try runGit(io, allocator, path, &.{ "init", "-b", "main" });
+    try run_git(io, allocator, path, &.{ "init", "-b", "main" });
 }
 
 /// Add a git submodule
-pub fn addSubmodule(io: std.Io, allocator: std.mem.Allocator, cwd: []const u8, url: []const u8, path: []const u8) !void {
+pub fn add_submodule(io: std.Io, allocator: std.mem.Allocator, cwd: []const u8, url: []const u8, path: []const u8) !void {
     log.info("adding submodule {s} at {s}", .{ url, path });
-    try runGit(io, allocator, cwd, &.{ "submodule", "add", url, path });
+    try run_git(io, allocator, cwd, &.{ "submodule", "add", url, path });
 }
 
 /// Add a git worktree (simple wrapper)
-pub fn addWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8, branch: []const u8, create_branch: bool, start_point: ?[]const u8) !void {
+pub fn add_worktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8, branch: []const u8, create_branch: bool, start_point: ?[]const u8) !void {
     var args: std.ArrayList([]const u8) = .empty;
     defer args.deinit(allocator);
 
@@ -177,32 +177,32 @@ pub fn addWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const 
         try args.append(allocator, sp);
     }
 
-    try runGit(io, allocator, repo_path, args.items);
+    try run_git(io, allocator, repo_path, args.items);
 }
 
 /// Remove a git worktree
-pub fn removeWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8, force: bool) !void {
+pub fn remove_worktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, worktree_path: []const u8, force: bool) !void {
     log.info("removing worktree {s}", .{worktree_path});
     if (force) {
-        try runGit(io, allocator, repo_path, &.{ "worktree", "remove", "--force", worktree_path });
+        try run_git(io, allocator, repo_path, &.{ "worktree", "remove", "--force", worktree_path });
     } else {
-        try runGit(io, allocator, repo_path, &.{ "worktree", "remove", worktree_path });
+        try run_git(io, allocator, repo_path, &.{ "worktree", "remove", worktree_path });
     }
 }
 
 /// Prune stale worktree metadata
-pub fn pruneWorktrees(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) !void {
+pub fn prune_worktrees(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) !void {
     log.info("pruning worktrees in {s}", .{repo_path});
-    try runGit(io, allocator, repo_path, &.{ "worktree", "prune" });
+    try run_git(io, allocator, repo_path, &.{ "worktree", "prune" });
 }
 
 /// List git worktrees
-pub fn listWorktrees(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) !void {
-    try runGit(io, allocator, repo_path, &.{ "worktree", "list" });
+pub fn list_worktrees(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) !void {
+    try run_git(io, allocator, repo_path, &.{ "worktree", "list" });
 }
 
 /// Get list of worktree paths
-pub fn getWorktreePaths(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
+pub fn get_worktree_paths(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
 
@@ -252,7 +252,7 @@ pub fn getWorktreePaths(io: std.Io, allocator: std.mem.Allocator, repo_path: []c
 }
 
 /// Add a path to .git/info/exclude (local gitignore)
-pub fn addLocalExclude(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !void {
+pub fn add_local_exclude(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !void {
     // Find .git directory (could be a file for worktrees)
     const git_path = try std.fs.path.join(allocator, &.{ repo_path, ".git" });
     defer allocator.free(git_path);

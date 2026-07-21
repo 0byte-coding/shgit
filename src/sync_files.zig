@@ -10,7 +10,7 @@ const log = std.log.scoped(.sync);
 /// and added to the worktree's local git exclude.
 ///
 /// This is invoked automatically when a worktree is created (`shgit worktree add`).
-pub fn syncToWorktree(
+pub fn sync_to_worktree(
     io: std.Io,
     allocator: std.mem.Allocator,
     cfg: config.Config,
@@ -19,11 +19,11 @@ pub fn syncToWorktree(
 ) !void {
     if (!cfg.sync_enabled) return;
     for (cfg.sync_patterns) |sp| {
-        try walkAndSync(io, allocator, main_repo_path, worktree_path, "", sp.pattern, sp.mode);
+        try walk_and_sync(io, allocator, main_repo_path, worktree_path, "", sp.pattern, sp.mode);
     }
 }
 
-fn walkAndSync(
+fn walk_and_sync(
     io: std.Io,
     allocator: std.mem.Allocator,
     main_base: []const u8,
@@ -55,9 +55,9 @@ fn walkAndSync(
         defer allocator.free(new_rel);
 
         if (entry.kind == .directory) {
-            try walkAndSync(io, allocator, main_base, worktree_base, new_rel, pattern, mode);
+            try walk_and_sync(io, allocator, main_base, worktree_base, new_rel, pattern, mode);
         } else {
-            if (fs_utils.matchGlob(new_rel, pattern)) {
+            if (fs_utils.match_glob(new_rel, pattern)) {
                 const src = try std.fs.path.join(allocator, &.{ main_base, new_rel });
                 defer allocator.free(src);
 
@@ -72,7 +72,7 @@ fn walkAndSync(
 
                 switch (mode) {
                     .symlink => {
-                        const rel_link = try fs_utils.relativePath(allocator, dst, src);
+                        const rel_link = try fs_utils.relative_path(allocator, dst, src);
                         defer allocator.free(rel_link);
 
                         std.Io.Dir.cwd().symLink(io, rel_link, dst, .{}) catch |err| {
@@ -90,7 +90,7 @@ fn walkAndSync(
                     },
                 }
 
-                git.addLocalExclude(io, allocator, worktree_base, new_rel) catch |err| {
+                git.add_local_exclude(io, allocator, worktree_base, new_rel) catch |err| {
                     log.warn("could not add {s} to local exclude: {}", .{ new_rel, err });
                 };
             }
