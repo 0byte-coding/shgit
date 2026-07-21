@@ -1,76 +1,26 @@
 const std = @import("std");
-const config = @import("../config.zig");
-const fs_utils = @import("../fs_utils.zig");
-const git = @import("../git.zig");
+const config = @import("config.zig");
+const fs_utils = @import("fs_utils.zig");
+const git = @import("git.zig");
 
 const log = std.log.scoped(.sync);
 
-pub fn execute(io: std.Io, allocator: std.mem.Allocator, verbose: bool) !void {
-    _ = verbose;
-
-    const shgit_root = try config.findShgitRoot(io, allocator) orelse {
-        log.err("not in a shgit project", .{});
-        return error.NotShgitProject;
-    };
-    defer allocator.free(shgit_root);
-
-    var cfg = try config.loadConfig(io, allocator, shgit_root);
-    defer cfg.deinit(allocator);
-
-    if (!cfg.sync_enabled) {
-        log.info("sync is disabled in config (sync_enabled = false)", .{});
-        return;
-    }
-
-    if (cfg.sync_patterns.len == 0) {
-        log.info("no sync_patterns configured in .shgit/config.json", .{});
-        return;
-    }
-
-    const main_repo = cfg.main_repo orelse {
-        log.err("no main_repo in config", .{});
-        return error.NoMainRepo;
-    };
-
-    const repo_dir = try std.fs.path.join(allocator, &.{ shgit_root, config.REPO_DIR });
-    defer allocator.free(repo_dir);
-
-    const main_repo_path = try std.fs.path.join(allocator, &.{ repo_dir, main_repo });
-    defer allocator.free(main_repo_path);
-
-    var dir = std.Io.Dir.cwd().openDir(io, repo_dir, .{ .iterate = true }) catch |err| {
-        log.err("could not open repo directory: {}", .{err});
-        return err;
-    };
-    defer dir.close(io);
-
-    var iter = dir.iterate();
-    while (try iter.next(io)) |entry| {
-        if (entry.kind != .directory) continue;
-        if (std.mem.eql(u8, entry.name, main_repo)) continue;
-
-        const worktree_path = try std.fs.path.join(allocator, &.{ repo_dir, entry.name });
-        defer allocator.free(worktree_path);
-
-        log.info("syncing to {s}", .{entry.name});
-
-        for (cfg.sync_patterns) |sp| {
-            try syncPattern(io, allocator, main_repo_path, worktree_path, sp.pattern, sp.mode);
-        }
-    }
-
-    log.info("sync complete", .{});
-}
-
-fn syncPattern(
+/// Propagate files from the main repo into a worktree according to the config's
+/// sync patterns. Each matching file is symlinked or copied (per pattern mode)
+/// and added to the worktree's local git exclude.
+///
+/// This is invoked automatically when a worktree is created (`shgit worktree add`).
+pub fn syncToWorktree(
     io: std.Io,
     allocator: std.mem.Allocator,
+    cfg: config.Config,
     main_repo_path: []const u8,
     worktree_path: []const u8,
-    pattern: []const u8,
-    mode: config.SyncMode,
 ) !void {
-    try walkAndSync(io, allocator, main_repo_path, worktree_path, "", pattern, mode);
+    if (!cfg.sync_enabled) return;
+    for (cfg.sync_patterns) |sp| {
+        try walkAndSync(io, allocator, main_repo_path, worktree_path, "", sp.pattern, sp.mode);
+    }
 }
 
 fn walkAndSync(

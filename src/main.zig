@@ -6,7 +6,6 @@ const clone = @import("commands/clone.zig");
 const link = @import("commands/link.zig");
 const unlink = @import("commands/unlink.zig");
 const worktree = @import("commands/worktree.zig");
-const sync = @import("commands/sync.zig");
 const init_cmd = @import("commands/init.zig");
 const version = @import("commands/version.zig");
 
@@ -32,7 +31,6 @@ pub fn main(init: std.process.Init) !void {
         link,
         unlink,
         worktree,
-        sync,
         init,
         version,
     };
@@ -79,7 +77,6 @@ pub fn main(init: std.process.Init) !void {
         .link => try linkMain(io, gpa, &iter, verbose),
         .unlink => try unlinkMain(io, gpa, &iter, verbose),
         .worktree => try worktreeMain(io, gpa, &iter, verbose),
-        .sync => try sync.execute(io, gpa, verbose),
         .init => try init_cmd.execute(io, gpa, verbose),
         .version => try version.execute(io, gpa, verbose),
     }
@@ -100,7 +97,6 @@ fn printHelp(io: std.Io, file: std.Io.File) !void {
         \\  link            Symlink files from link/ into repo and add to local gitignore
         \\  unlink          Revert the overlay (all, or a single path) across repos/worktrees
         \\  worktree        Manage git worktrees with proper symlinks
-        \\  sync            Sync env files from main repo to worktrees based on config
         \\  init            Initialize shgit in an existing directory structure
         \\  version         Show shgit version
         \\

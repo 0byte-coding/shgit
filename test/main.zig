@@ -1047,3 +1047,80 @@ test "remove then restore round-trip via git helpers" {
         try std.testing.expect(tag == 'H'); // H = normal tracked, cached
     }
 }
+
+// --- shared sync_files module (used by worktree auto-sync) ---
+
+test "syncToWorktree symlinks matching files using glob patterns" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    // main repo with an env file and a nested one; a worktree beside it.
+    try tmp_dir.dir.createDirPath(tio, "main/src");
+    const e1 = try tmp_dir.dir.createFile(tio, "main/.env", .{});
+    try e1.writeStreamingAll(tio, "ROOT=1");
+    e1.close(tio);
+    const e2 = try tmp_dir.dir.createFile(tio, "main/src/.env", .{});
+    try e2.writeStreamingAll(tio, "NESTED=1");
+    e2.close(tio);
+    const other = try tmp_dir.dir.createFile(tio, "main/README.md", .{});
+    try other.writeStreamingAll(tio, "doc");
+    other.close(tio);
+    try tmp_dir.dir.createDirPath(tio, "wt");
+    // Give the worktree a .git so addLocalExclude has somewhere to write.
+    try tmp_dir.dir.createDirPath(tio, "wt/.git/info");
+
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const n = try tmp_dir.dir.realPathFile(tio, ".", &buf);
+    const base = buf[0..n];
+    const main_path = try std.fs.path.join(a, &.{ base, "main" });
+    const wt_path = try std.fs.path.join(a, &.{ base, "wt" });
+
+    const patterns = try a.alloc(shgit.config.SyncPattern, 1);
+    patterns[0] = .{ .pattern = ".env", .mode = .symlink };
+    const cfg = shgit.config.Config{
+        .sync_patterns = patterns,
+        .sync_enabled = true,
+    };
+
+    try shgit.sync_files.syncToWorktree(tio, a, cfg, main_path, wt_path);
+
+    // Both .env files should now exist in the worktree (basename-at-any-depth).
+    const s1 = try tmp_dir.dir.statFile(tio, "wt/.env", .{});
+    _ = s1;
+    const s2 = try tmp_dir.dir.statFile(tio, "wt/src/.env", .{});
+    _ = s2;
+    // README must NOT be synced.
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile(tio, "wt/README.md", .{}));
+}
+
+test "syncToWorktree does nothing when disabled" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    try tmp_dir.dir.createDirPath(tio, "main");
+    const e1 = try tmp_dir.dir.createFile(tio, "main/.env", .{});
+    try e1.writeStreamingAll(tio, "X=1");
+    e1.close(tio);
+    try tmp_dir.dir.createDirPath(tio, "wt");
+
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const n = try tmp_dir.dir.realPathFile(tio, ".", &buf);
+    const base = buf[0..n];
+    const main_path = try std.fs.path.join(a, &.{ base, "main" });
+    const wt_path = try std.fs.path.join(a, &.{ base, "wt" });
+
+    const patterns = try a.alloc(shgit.config.SyncPattern, 1);
+    patterns[0] = .{ .pattern = ".env", .mode = .symlink };
+    const cfg = shgit.config.Config{ .sync_patterns = patterns, .sync_enabled = false };
+
+    try shgit.sync_files.syncToWorktree(tio, a, cfg, main_path, wt_path);
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile(tio, "wt/.env", .{}));
+}

@@ -10,7 +10,7 @@ Store project-specific files (configs, env templates) that can't be committed to
 - `shgit link` - Symlink files from `link/` into repo, add to local gitignore
 - `shgit unlink [path]` - Revert the overlay (all, or a single path)
 - `shgit worktree add <name>` - Create worktree with proper symlinks
-- Config-based env file syncing between main repo and worktrees
+- Config-based env file syncing from the main repo into new worktrees (on `worktree add`)
 - `remove_patterns` - Delete unwanted files from the target repo, hidden from git
 
 ## Shadowing & removing existing files
