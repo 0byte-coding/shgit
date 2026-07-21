@@ -77,9 +77,13 @@ pub fn execute(io: std.Io, allocator: std.mem.Allocator, args: LinkArgs, verbose
     log.info("linking complete", .{});
 }
 
-/// Walk `repo_base` and remove every file matching any of `patterns`.
-/// Tracked matches are additionally marked skip-worktree so the removal is
-/// hidden from git status.
+/// Remove every file matching any of `patterns` from `repo_base`.
+///
+/// We only ever consider files that git knows about and does NOT ignore
+/// (tracked + untracked-but-not-ignored). This intentionally skips gitignored
+/// trees such as `node_modules/`, `dist/`, etc. — shgit should never touch
+/// files git itself is ignoring. Tracked matches are additionally marked
+/// skip-worktree so the removal is hidden from git status.
 fn applyRemovePatterns(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -87,53 +91,27 @@ fn applyRemovePatterns(
     patterns: []const []const u8,
 ) !void {
     if (patterns.len == 0) return;
-    try removeWalk(io, allocator, repo_base, "", patterns);
-}
 
-fn removeWalk(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    repo_base: []const u8,
-    rel_path: []const u8,
-    patterns: []const []const u8,
-) !void {
-    const dir_path = if (rel_path.len > 0)
-        try std.fs.path.join(allocator, &.{ repo_base, rel_path })
-    else
-        try allocator.dupe(u8, repo_base);
-    defer allocator.free(dir_path);
-
-    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch |err| {
-        if (err == error.FileNotFound or err == error.NotDir) return;
-        return err;
+    const candidates = git.listNonIgnoredFiles(io, allocator, repo_base) catch |err| {
+        log.warn("could not list files for remove_patterns (skipping): {}", .{err});
+        return;
     };
-    defer dir.close(io);
+    defer {
+        for (candidates) |c| allocator.free(c);
+        allocator.free(candidates);
+    }
 
-    var iter = dir.iterate();
-    while (try iter.next(io)) |entry| {
-        // Never descend into or remove anything from the git metadata directory.
-        if (std.mem.eql(u8, entry.name, ".git")) continue;
-
-        const new_rel = if (rel_path.len > 0)
-            try std.fs.path.join(allocator, &.{ rel_path, entry.name })
-        else
-            try allocator.dupe(u8, entry.name);
-        defer allocator.free(new_rel);
-
-        if (entry.kind == .directory) {
-            try removeWalk(io, allocator, repo_base, new_rel, patterns);
-        } else {
-            var matched = false;
-            for (patterns) |pat| {
-                if (fs_utils.matchGlob(new_rel, pat)) {
-                    matched = true;
-                    break;
-                }
+    for (candidates) |rel| {
+        var matched = false;
+        for (patterns) |pat| {
+            if (fs_utils.matchGlob(rel, pat)) {
+                matched = true;
+                break;
             }
-            if (!matched) continue;
-
-            try removeMatched(io, allocator, repo_base, new_rel);
         }
+        if (!matched) continue;
+
+        try removeMatched(io, allocator, repo_base, rel);
     }
 }
 

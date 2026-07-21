@@ -24,7 +24,9 @@ added to `.git/info/exclude` instead.
 Use `remove_patterns` in the config to declare files that exist in the target
 repo but you don't want. On `shgit link` they are deleted from the repo (and
 every worktree); tracked matches are additionally `--skip-worktree`'d so the
-deletion stays invisible to git.
+deletion stays invisible to git. Only files git knows about and does **not**
+ignore are considered — gitignored trees like `node_modules/` or `dist/` are
+never touched.
 
 Both `remove_patterns` and `sync_patterns` use the same gitignore-style glob
 matcher (`*`, `**`, `?`, `[abc]`, a leading `/` to anchor to the repo root, and

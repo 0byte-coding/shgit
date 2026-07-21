@@ -1124,3 +1124,91 @@ test "syncToWorktree does nothing when disabled" {
     try shgit.sync_files.syncToWorktree(tio, a, cfg, main_path, wt_path);
     try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile(tio, "wt/.env", .{}));
 }
+
+// --- gitignore-aware file listing (used by remove_patterns) ---
+
+test "listNonIgnoredFiles excludes gitignored paths" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const repo = (try setupGitRepo(a, &tmp_dir, &.{
+        .{ .path = ".gitignore", .content = "node_modules/\ndist/\n" },
+        .{ .path = "CHANGELOG.md", .content = "log" },
+        .{ .path = "packages/core/AGENTS.md", .content = "agents" },
+    })) orelse return error.SkipZigTest;
+
+    // Create gitignored files (with names that would match remove_patterns).
+    try tmp_dir.dir.createDirPath(tio, "node_modules/acorn");
+    const nm = try tmp_dir.dir.createFile(tio, "node_modules/acorn/CHANGELOG.md", .{});
+    try nm.writeStreamingAll(tio, "nm");
+    nm.close(tio);
+    try tmp_dir.dir.createDirPath(tio, "dist");
+    const d = try tmp_dir.dir.createFile(tio, "dist/AGENTS.md", .{});
+    try d.writeStreamingAll(tio, "d");
+    d.close(tio);
+
+    // Also an untracked-but-not-ignored file (should be included).
+    const scratch = try tmp_dir.dir.createFile(tio, "SCRATCH.md", .{});
+    try scratch.writeStreamingAll(tio, "s");
+    scratch.close(tio);
+
+    const files = try shgit.git.listNonIgnoredFiles(tio, a, repo);
+
+    var saw_changelog = false;
+    var saw_agents = false;
+    var saw_scratch = false;
+    var saw_nm = false;
+    var saw_dist = false;
+    for (files) |f| {
+        if (std.mem.eql(u8, f, "CHANGELOG.md")) saw_changelog = true;
+        if (std.mem.eql(u8, f, "packages/core/AGENTS.md")) saw_agents = true;
+        if (std.mem.eql(u8, f, "SCRATCH.md")) saw_scratch = true;
+        if (std.mem.indexOf(u8, f, "node_modules/") != null) saw_nm = true;
+        if (std.mem.indexOf(u8, f, "dist/") != null) saw_dist = true;
+    }
+    try std.testing.expect(saw_changelog);
+    try std.testing.expect(saw_agents);
+    try std.testing.expect(saw_scratch); // untracked but not ignored
+    try std.testing.expect(!saw_nm); // gitignored -> excluded
+    try std.testing.expect(!saw_dist); // gitignored -> excluded
+}
+
+test "remove_patterns only match non-ignored files" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const repo = (try setupGitRepo(a, &tmp_dir, &.{
+        .{ .path = ".gitignore", .content = "node_modules/\n" },
+        .{ .path = "CHANGELOG.md", .content = "log" },
+    })) orelse return error.SkipZigTest;
+
+    try tmp_dir.dir.createDirPath(tio, "node_modules/acorn");
+    const nm = try tmp_dir.dir.createFile(tio, "node_modules/acorn/CHANGELOG.md", .{});
+    try nm.writeStreamingAll(tio, "nm");
+    nm.close(tio);
+
+    // Simulate the remove_patterns pass exactly: candidates come from git only.
+    const pattern = "CHANGELOG.md";
+    const candidates = try shgit.git.listNonIgnoredFiles(tio, a, repo);
+    var removed_tracked = false;
+    for (candidates) |rel| {
+        if (!shgit.fs_utils.matchGlob(rel, pattern)) continue;
+        // The only candidate that matches must be the tracked top-level one.
+        try std.testing.expectEqualStrings("CHANGELOG.md", rel);
+        removed_tracked = true;
+    }
+    try std.testing.expect(removed_tracked);
+
+    // The gitignored CHANGELOG.md is not in the candidate set at all.
+    for (candidates) |rel| {
+        try std.testing.expect(std.mem.indexOf(u8, rel, "node_modules/") == null);
+    }
+}

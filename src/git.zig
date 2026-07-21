@@ -67,14 +67,16 @@ pub fn noSkipWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []con
     }
 }
 
-/// Return the list of files tracked by git in the repo/worktree at `repo_path`
-/// (relative paths, `/`-separated). Caller owns each string and the slice.
-pub fn listTrackedFiles(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
+/// Run `git ls-files <extra_args...>` and return the newline-separated paths as
+/// a list of owned strings (relative, `/`-separated). Caller owns each string
+/// and the slice.
+fn runLsFiles(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, extra_args: []const []const u8) ![][]const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
 
     try argv.append(allocator, "git");
     try argv.append(allocator, "ls-files");
+    try argv.appendSlice(allocator, extra_args);
 
     var child = try std.process.spawn(io, .{
         .argv = argv.items,
@@ -106,6 +108,21 @@ pub fn listTrackedFiles(io: std.Io, allocator: std.mem.Allocator, repo_path: []c
     }
 
     return try files.toOwnedSlice(allocator);
+}
+
+/// Return the list of files tracked by git in the repo/worktree at `repo_path`
+/// (relative paths, `/`-separated). Caller owns each string and the slice.
+pub fn listTrackedFiles(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
+    return runLsFiles(io, allocator, repo_path, &.{});
+}
+
+/// Return every file git knows about that is NOT gitignored: tracked files plus
+/// untracked files, with all standard ignore rules applied (`.gitignore`,
+/// `.git/info/exclude`, global excludes). This is the correct set to scan when
+/// applying `remove_patterns`, so ignored trees like `node_modules/` are skipped.
+/// Caller owns each string and the slice.
+pub fn listNonIgnoredFiles(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
+    return runLsFiles(io, allocator, repo_path, &.{ "--cached", "--others", "--exclude-standard" });
 }
 
 /// Restore a tracked file to its committed (HEAD-index) contents in the working
