@@ -21,10 +21,10 @@ log.debug("debug details", .{});
 - Log errors with context before returning
 
 ```zig
-pub fn doSomething() !void {
+pub fn do_something() !void {
     const resource = try allocate();
     errdefer resource.deinit();
-    doWork() catch |err| {
+    do_work() catch |err| {
         log.err("work failed: {}", .{err});
         return err;
     };
@@ -38,7 +38,8 @@ pub fn doSomething() !void {
 
 ### Naming Conventions
 
-- Functions: `camelCase`
+- Functions: `snake_case`
+- Variables: `snake_case`
 - Types: `PascalCase`
 - Constants: `SCREAMING_SNAKE_CASE` for comptime, `snake_case` for runtime
 - Files: `snake_case.zig`
@@ -47,6 +48,9 @@ pub fn doSomething() !void {
 ### Testing
 
 - **All tests go in the `test/` folder, NOT in source files**
+- `test/main.zig` is the entrypoint that imports every other test file; add new test files there
+- Group tests by module in dedicated files (e.g., `test/git_test.zig`, `test/config_test.zig`)
+- Shared test helpers live in `test/helpers.zig`
 - Tests import the shgit module via `const shgit = @import("shgit")`
 - The `src/root.zig` file exports all modules for testing
 - Use `std.testing.allocator` for memory leak detection
