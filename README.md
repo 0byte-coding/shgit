@@ -8,6 +8,7 @@ Store project-specific files (configs, env templates) that can't be committed to
 
 - `shgit clone <url>` - Clone repo as submodule into `<reponame>_shgit/repo/`
 - `shgit link` - Symlink files from `link/` into repo, add to local gitignore
+- `shgit unlink [path]` - Revert the overlay (all, or a single path)
 - `shgit worktree add <name>` - Create worktree with proper symlinks
 - Config-based env file syncing between main repo and worktrees
 - `remove_patterns` - Delete unwanted files from the target repo, hidden from git
@@ -36,6 +37,22 @@ a trailing `/` for directory patterns).
   "remove_patterns": ["**/*.log", ".vscode/", "docs/legacy.md"]
 }
 ```
+
+### Reverting: `shgit unlink`
+
+`shgit unlink` undoes everything `shgit link` did, across the main repo and every
+worktree:
+
+- removes the symlinks that mirror `link/`,
+- restores any **tracked** file that was shadowed (clears `--skip-worktree` and
+  checks the original back out),
+- undeletes files removed by `remove_patterns` (restores tracked files to their
+  committed contents),
+- cleans the entries shgit added to `.git/info/exclude`.
+
+Pass a path (`shgit unlink path/to/file`) to revert just that one file instead of
+the whole overlay. Note: untracked overlay files are simply removed (there is no
+committed version to restore).
 
 ## Structure
 

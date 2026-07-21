@@ -67,6 +67,59 @@ pub fn noSkipWorktree(io: std.Io, allocator: std.mem.Allocator, repo_path: []con
     }
 }
 
+/// Return the list of files tracked by git in the repo/worktree at `repo_path`
+/// (relative paths, `/`-separated). Caller owns each string and the slice.
+pub fn listTrackedFiles(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8) ![][]const u8 {
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+
+    try argv.append(allocator, "git");
+    try argv.append(allocator, "ls-files");
+
+    var child = try std.process.spawn(io, .{
+        .argv = argv.items,
+        .cwd = .{ .path = repo_path },
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .ignore,
+    });
+
+    const stdout_file = child.stdout.?;
+    var read_buf: [4096]u8 = undefined;
+    var r = stdout_file.reader(io, &read_buf);
+    const stdout = try r.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout);
+
+    _ = try child.wait(io);
+
+    var files: std.ArrayList([]const u8) = .empty;
+    errdefer {
+        for (files.items) |f| allocator.free(f);
+        files.deinit(allocator);
+    }
+
+    var lines = std.mem.splitScalar(u8, stdout, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \r\t");
+        if (trimmed.len == 0) continue;
+        try files.append(allocator, try allocator.dupe(u8, trimmed));
+    }
+
+    return try files.toOwnedSlice(allocator);
+}
+
+/// Restore a tracked file to its committed (HEAD-index) contents in the working
+/// tree, undoing a shadow or a removal. Returns true on success.
+pub fn restoreFile(io: std.Io, allocator: std.mem.Allocator, repo_path: []const u8, rel_path: []const u8) !bool {
+    const ok = try runGitProbe(io, allocator, repo_path, &.{ "checkout", "--", rel_path });
+    if (!ok) {
+        log.warn("could not restore {s}", .{rel_path});
+    } else {
+        log.debug("restored {s}", .{rel_path});
+    }
+    return ok;
+}
+
 /// Initialize a git repository
 pub fn init(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
     log.info("git init {s}", .{path});

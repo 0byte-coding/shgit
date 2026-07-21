@@ -925,3 +925,125 @@ test "applyRemovePatterns via link: removes tracked file and hides it" {
     try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile(tio, "drop.log", .{}));
     try std.testing.expectEqualStrings("", try gitStatus(a, repo));
 }
+
+// --- unlink / revert helpers ---
+
+test "listTrackedFiles returns committed files" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const repo = (try setupGitRepo(a, &tmp_dir, &.{
+        .{ .path = "a.txt", .content = "1" },
+        .{ .path = "sub/b.log", .content = "2" },
+    })) orelse return error.SkipZigTest;
+
+    // Untracked file must not appear.
+    const uf = try tmp_dir.dir.createFile(tio, "untracked.txt", .{});
+    try uf.writeStreamingAll(tio, "x");
+    uf.close(tio);
+
+    const files = try shgit.git.listTrackedFiles(tio, a, repo);
+    var saw_a = false;
+    var saw_b = false;
+    var saw_untracked = false;
+    for (files) |f| {
+        if (std.mem.eql(u8, f, "a.txt")) saw_a = true;
+        if (std.mem.eql(u8, f, "sub/b.log")) saw_b = true;
+        if (std.mem.eql(u8, f, "untracked.txt")) saw_untracked = true;
+    }
+    try std.testing.expect(saw_a);
+    try std.testing.expect(saw_b);
+    try std.testing.expect(!saw_untracked);
+}
+
+test "restoreFile undoes a shadow (skip-worktree + overwrite)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const repo = (try setupGitRepo(a, &tmp_dir, &.{
+        .{ .path = "conf.json", .content = "ORIGINAL" },
+    })) orelse return error.SkipZigTest;
+
+    // Shadow it: skip-worktree, then overwrite content (simulating an overlay).
+    try shgit.git.skipWorktree(tio, a, repo, "conf.json");
+    const of = try tmp_dir.dir.createFile(tio, "conf.json", .{ .truncate = true });
+    try of.writeStreamingAll(tio, "OVERLAY");
+    of.close(tio);
+    // Status stays clean while shadowed.
+    try std.testing.expectEqualStrings("", try gitStatus(a, repo));
+
+    // Revert: clear flag + delete + checkout.
+    try shgit.git.noSkipWorktree(tio, a, repo, "conf.json");
+    try tmp_dir.dir.deleteFile(tio, "conf.json");
+    try std.testing.expect(try shgit.git.restoreFile(tio, a, repo, "conf.json"));
+
+    const restored = try tmp_dir.dir.readFileAlloc(tio, "conf.json", a, .unlimited);
+    try std.testing.expectEqualStrings("ORIGINAL", restored);
+    try std.testing.expectEqualStrings("", try gitStatus(a, repo));
+}
+
+test "remove then restore round-trip via git helpers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const repo = (try setupGitRepo(a, &tmp_dir, &.{
+        .{ .path = "keep.txt", .content = "keep" },
+        .{ .path = "drop.log", .content = "noise" },
+        .{ .path = "nested/also.log", .content = "noise2" },
+    })) orelse return error.SkipZigTest;
+
+    const pattern = "**/*.log";
+
+    // Remove pass: skip-worktree + delete every tracked file matching the pattern.
+    {
+        const tracked = try shgit.git.listTrackedFiles(tio, a, repo);
+        for (tracked) |rel| {
+            if (!shgit.fs_utils.matchGlob(rel, pattern)) continue;
+            try shgit.git.skipWorktree(tio, a, repo, rel);
+            try tmp_dir.dir.deleteFile(tio, rel);
+        }
+    }
+    try std.testing.expectError(error.FileNotFound, tmp_dir.dir.statFile(tio, "drop.log", .{}));
+    try std.testing.expectEqualStrings("", try gitStatus(a, repo));
+
+    // Restore pass: clear flag + checkout every tracked file matching the pattern.
+    {
+        const tracked = try shgit.git.listTrackedFiles(tio, a, repo);
+        for (tracked) |rel| {
+            if (!shgit.fs_utils.matchGlob(rel, pattern)) continue;
+            try shgit.git.noSkipWorktree(tio, a, repo, rel);
+            _ = try shgit.git.restoreFile(tio, a, repo, rel);
+        }
+    }
+
+    const drop = try tmp_dir.dir.readFileAlloc(tio, "drop.log", a, .unlimited);
+    try std.testing.expectEqualStrings("noise", drop);
+    const nested = try tmp_dir.dir.readFileAlloc(tio, "nested/also.log", a, .unlimited);
+    try std.testing.expectEqualStrings("noise2", nested);
+    // keep.txt untouched, tree fully clean, no skip-worktree flags remain.
+    try std.testing.expectEqualStrings("", try gitStatus(a, repo));
+
+    const lsv = try std.process.run(a, tio, .{
+        .argv = &.{ "git", "ls-files", "-v" },
+        .cwd = .{ .path = repo },
+    });
+    // Lines beginning with a lowercase letter (h/s/m) => skip-worktree/assume-unchanged.
+    var lines = std.mem.splitScalar(u8, lsv.stdout, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const tag = line[0];
+        try std.testing.expect(tag == 'H'); // H = normal tracked, cached
+    }
+}

@@ -98,7 +98,7 @@ fn printHelp(io: std.Io, file: std.Io.File) !void {
         \\Commands:
         \\  clone           Clone a repository as submodule into shgit structure
         \\  link            Symlink files from link/ into repo and add to local gitignore
-        \\  unlink          Remove symlinked file from all repos/worktrees
+        \\  unlink          Revert the overlay (all, or a single path) across repos/worktrees
         \\  worktree        Manage git worktrees with proper symlinks
         \\  sync            Sync env files from main repo to worktrees based on config
         \\  init            Initialize shgit in an existing directory structure
@@ -220,15 +220,20 @@ fn unlinkMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterat
 
     if (res.args.help != 0) {
         const help_text =
-            \\Usage: shgit unlink <path>
+            \\Usage: shgit unlink [path]
             \\
-            \\Remove symlinked file from all repos/worktrees and local gitignore.
+            \\Revert the shgit overlay. With no argument this undoes everything
+            \\`shgit link` did across the repo and all worktrees: removes symlinks,
+            \\restores shadowed tracked files, undeletes files removed by
+            \\remove_patterns, clears skip-worktree flags, and cleans local excludes.
+            \\
+            \\With a <path> argument only that single file is reverted.
             \\
             \\Options:
             \\  -h, --help  Display this help and exit
             \\
             \\Arguments:
-            \\  <path>      Relative path to unlink (e.g., packages/supabase/config.toml)
+            \\  [path]      Optional relative path to revert (e.g., packages/supabase/config.toml)
             \\
         ;
         var buf: [4096]u8 = undefined;
@@ -238,9 +243,8 @@ fn unlinkMain(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterat
         return;
     }
 
-    const path = res.positionals[0] orelse return error.MissingPath;
     const unlink_args = unlink.UnlinkArgs{
-        .path = path,
+        .path = res.positionals[0],
     };
     try unlink.execute(io, gpa, unlink_args, verbose);
 }
